@@ -1,8 +1,9 @@
 
 
 
+
 ##########################################
-# "BATCH QUANTITY" STRUCT
+# "BATCH QUANTITY" DEFINITION 
 ##########################################
 mutable struct BatchQuantity
     values::AbstractMatrix
@@ -13,19 +14,13 @@ end
 
 function BatchQuantity(values, row_batches::Vector{Int}, col_batches::Vector{Int})
    
-    unique_row_batches = unique(row_batches)
-    row_start_idx = indexin(unique_row_batches, row_batches)
-    row_end_idx = length(row_batches) .- indexin(unique_row_batches, reverse(row_batches)) .+ 1
-    row_ranges = [rs:re for (rs,re) in zip(row_start_idx, row_end_idx)]
-
-    unique_col_batches = unique(col_batches)
-    col_start_idx = indexin(unique_col_batches, col_batches)
-    col_end_idx = length(col_batches) .- indexin(unique_col_batches, reverse(col_batches)) .+ 1
-    col_ranges = [cs:ce for (cs,ce) in zip(col_start_idx, col_end_idx)]
+    row_ranges = ids_to_ranges(row_batches)
+    col_ranges = ids_to_ranges(col_batches)
     
     return BatchQuantity(values, row_ranges, col_ranges)
 
 end
+
 
 ##########################################
 # "BATCH QUANTITY" ADDITION 
@@ -98,31 +93,58 @@ function ChainRules.rrule(::typeof(bq_mult), A, B)
 end
 
 
+####################################
+# COLUMN RANGE MAP
+####################################
+
+struct ColRangeMap
+    funcs::AbstractVector{Function}
+    col_ranges::AbstractVector{AbstractRange}
+end
+
+function ColRangeMap(funcs, col_batch_ids::AbstractVector{String})
+    col_ranges = ids_to_ranges(col_batch_ids)
+    return ColRangeMap(funcs, col_ranges)
+end
+
+function (crm::ColRangeMap)(Z::AbstractMatrix)
+
+    result = zero(Z) 
+    for (ln_fn, rng) in zip(crm.funcs, crm.col_ranges)
+        result[:,rng] = ln_fn(Z[:,rng])
+    end
+    return result
+end
+
+
+function ChainRules.rrule(crm::ColRangeMap, Z::AbstractMatrix)
+
+    A = zero(Z)
+    func_pullbacks = []
+    for (fn, rng) in zip(crm.funcs, crm.col_ranges)
+        (A_chunk, new_fn) = Zygote.pullback(fn, Z[:,rng])
+        A[:,rng] .= A_chunk
+        push!(func_pullbacks, new_fn)
+    end
+
+    function ColRangeMap_pullback(A_bar)
+        Z_bar = zero(Z)
+        for (pb, rng) in zip(func_pullbacks, crm.col_ranges)
+            Z_bar[:,rng] .= pb(A_bar[:,rng])[1]
+        end
+        return ChainRules.NoTangent(), Z_bar
+    end
+
+    return A, ColRangeMap_pullback
+
+end
+
+
+
+
 #row_batches = repeat(1:5, inner=(2,))
 #col_batches = repeat(1:2, inner=(5,))
 #values = reshape(collect(1:10), (5,2))
 #
 #my_bq = BatchQuantity(values,row_batches,col_batches)
 #println("INITIALIZED BQ")
-#println(my_bq)
-#
-#A = CUDA.ones(10,10) 
-#println("A")
-#println(A)
-#
-#add_grad = gradient((X,Y) -> sum(bq_add(X,Y)), A, my_bq)
-#println("COMPUTED ADDITION GRADIENT")
-#println(add_grad)
-#
-#add_grad = gradient((X,Y) -> sum(bq_add(X,Y)), A, my_bq)
-#println("COMPUTED ADDITION GRADIENT")
-#println(add_grad)
-#
-#mult_grad = gradient((X,Y) -> sum(bq_mult(X,Y)), A, my_bq)
-#println("COMPUTED MULT GRADIENT")
-#println(mult_grad)
-#
-#mult_grad = gradient((X,Y) -> sum(bq_mult(X,Y)), A, my_bq)
-#println("COMPUTED MULT GRADIENT")
-#println(mult_grad)
-
