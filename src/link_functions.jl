@@ -1,21 +1,31 @@
 
-using ChainRules, Zygote, CUDA
-
 
 
 ####################################
 # LINK FUNCTIONS
 ####################################
 
-function quad_link(Z)
+function quad_link(Z::AbstractArray)
     return Z
 end
 
-function logistic_link(Z)
-    return 1.0 ./ (1.0 .+ exp.(-Z))
+
+function logistic_link(Z::AbstractArray)
+    return Float32(1.0) ./ (Float32(1.0) .+ exp.(-Z))
 end
 
-function poisson_link(Z)
+
+function ChainRules.rrule(::typeof(logistic_link), Z)
+    A = logistic_link(Z)
+
+    function logistic_link_pullback(A_bar)
+        return ChainRules.NoTangent(), A_bar .* (A .* (1 .- A))
+    end
+    return A, logistic_link_pullback
+end
+
+
+function poisson_link(Z::AbstractArray)
     return exp.(Z)
 end
 

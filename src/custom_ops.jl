@@ -22,6 +22,7 @@ function BatchQuantity(values, row_batches::Vector{Int}, col_batches::Vector{Int
 end
 
 
+
 ##########################################
 # "BATCH QUANTITY" ADDITION 
 ##########################################
@@ -51,7 +52,7 @@ function ChainRules.rrule(::typeof(bq_add), A, B)
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, B_bar
+        return ChainRules.NoTangent(), A_bar, ChainRules.Tangent{BatchQuantity}(;values=B_bar)
     end
     return Z, bq_add_pullback
 end
@@ -75,7 +76,7 @@ end
 
 function ChainRules.rrule(::typeof(bq_mult), A, B)
 
-    Z = bq_add(A,B)
+    Z = bq_mult(A,B)
 
     function bq_add_pullback(Z_bar)
         A_bar = copy(Z_bar)
@@ -87,7 +88,7 @@ function ChainRules.rrule(::typeof(bq_mult), A, B)
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, B_bar
+        return ChainRules.NoTangent(), A_bar, ChainRules.Tangent{BatchQuantity}(;values=B_bar)
     end
     return Z, bq_add_pullback
 end
@@ -107,6 +108,7 @@ function ColRangeMap(funcs, col_batch_ids::AbstractVector{String})
     return ColRangeMap(funcs, col_ranges)
 end
 
+
 function (crm::ColRangeMap)(Z::AbstractMatrix)
 
     result = zero(Z) 
@@ -117,7 +119,8 @@ function (crm::ColRangeMap)(Z::AbstractMatrix)
 end
 
 
-function ChainRules.rrule(crm::ColRangeMap, Z::AbstractMatrix)
+
+function ChainRules.rrule(crm::ColRangeMap, Z)
 
     A = zero(Z)
     func_pullbacks = []
@@ -140,7 +143,52 @@ function ChainRules.rrule(crm::ColRangeMap, Z::AbstractMatrix)
 end
 
 
+####################################################
+# COLUMN RANGE AGGREGATOR
+####################################################
 
+struct ColRangeAgg
+    funcs::AbstractVector{Function}
+    col_ranges::AbstractVector{AbstractRange}
+end
+
+function ColRangeAgg(funcs, col_batch_ids::AbstractVector{String})
+    col_ranges = ids_to_ranges(col_batch_ids)
+    return ColRangeAgg(funcs, col_ranges)
+end
+
+function (cra::ColRangeAgg)(Z::AbstractMatrix, A::AbstractMatrix)
+
+    result = zeros(Float32, length(cra.col_ranges)) 
+    for (i, (fn, rng)) in enumerate(zip(cra.funcs, cra.col_ranges))
+        result[i] = fn(Z[:,rng], A[:,rng])
+    end
+    return result
+end
+
+
+function ChainRules.rrule(cra::ColRangeAgg, Z, A)
+
+    result = zeros(Float32, length(cra.col_ranges)) 
+    func_pullbacks = []
+    for (i, (fn, rng)) in enumerate(zip(cra.funcs, cra.col_ranges))
+        (res, new_fn) = Zygote.pullback(fn, Z[:,rng], A[:,rng])
+        result[i] = res
+        push!(func_pullbacks, new_fn)
+    end
+
+    function ColRangeAgg_pullback(result_bar)
+        Z_bar = zero(Z)
+        A_bar = ChainRules.@thunk(zero(A))
+        for (i,(pb, rng)) in enumerate(zip(func_pullbacks, cra.col_ranges))
+            Z_bar[:,rng] .= pb(result_bar[i])[1]
+        end
+        return ChainRules.NoTangent(), Z_bar, A_bar
+    end
+
+    return result, ColRangeAgg_pullback
+
+end
 
 #row_batches = repeat(1:5, inner=(2,))
 #col_batches = repeat(1:2, inner=(5,))
