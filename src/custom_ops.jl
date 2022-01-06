@@ -1,14 +1,15 @@
 
 
+import Base: getindex, setindex!
 
 
 ##########################################
 # "BATCH QUANTITY" DEFINITION 
 ##########################################
-mutable struct BatchQuantity
+mutable struct BatchQuantity 
     values::AbstractMatrix
-    row_ranges::AbstractVector{AbstractRange}
-    col_ranges::AbstractVector{AbstractRange}
+    row_ranges::AbstractVector{UnitRange}
+    col_ranges::AbstractVector{UnitRange}
 end
 
 
@@ -21,6 +22,38 @@ function BatchQuantity(values, row_batches::Vector{Int}, col_batches::Vector{Int
 
 end
 
+
+# For now, we only subset by row.
+# All columns are included.
+# Note an important difference with AbstractMatrix
+# semantics: the result of getindex retains the original
+# r
+function getindex(A::BatchQuantity, row_range::UnitRange, col_range)
+
+    r_min = row_range.start
+    r_max = row_range.stop
+
+    if r_min > r_max
+        return row_range
+    end
+
+    @assert r_min >= A.row_ranges[1].start
+    @assert r_max <= A.row_ranges[end].stop
+
+    row_starts = [rr.start for rr in A.row_ranges]
+    r_min_idx = searchsorted(row_starts, r_min).stop
+    
+    row_stops = [rr.stop for rr in A.row_ranges]
+    r_max_idx = searchsorted(row_stops, r_max).start
+
+    new_row_ranges = row_ranges[r_min_idx:r_max_idx]
+    new_row_ranges[1] = r_min:new_row_ranges[1].stop
+    new_row_ranges[end] = new_row_ranges[end].start:r_max
+
+    return BatchQuantity(A.values[r_min_idx:r_max_idx,:],
+                         new_row_ranges,
+                         A.col_ranges)
+end
 
 
 ##########################################
@@ -39,7 +72,7 @@ function bq_add(A::AbstractMatrix, B::BatchQuantity)
 end
 
 
-function ChainRules.rrule(::typeof(bq_add), A, B)
+function ChainRules.rrule(::typeof(bq_add), A::AbstractMult, B::BatchQuantity)
 
     Z = bq_add(A,B)
 
@@ -55,6 +88,31 @@ function ChainRules.rrule(::typeof(bq_add), A, B)
         return ChainRules.NoTangent(), A_bar, ChainRules.Tangent{BatchQuantity}(;values=B_bar)
     end
     return Z, bq_add_pullback
+end
+
+
+function bq_add!(A::BatchQuantity, B::BatchQuantity)
+
+    # Locate the index of the first A.value touched by B
+    A_starts = Int[rng.start for rng in A.row_ranges]
+    A_idx_min = searchsorted(A_starts, B.row_ranges[1].start).stop
+    
+    # Locate the index of the last A.value touched by B
+    A_stops = Int[rng.stop for rng in A.row_ranges]
+    A_idx_max = searchsorted(A_stops, B.row_ranges[end].stop).start
+
+    A_idx = A_idx_min
+    B_idx = 1
+    B_l = A.row_ranges[B_idx].start
+    B_u = A.row_ranges[B_idx].stop
+    while A_idx <= A_idx_max
+
+        A_l = A.row_ranges[A_idx].start
+        A_u = A.row_ranges[A_idx].stop
+        
+    end
+
+
 end
 
 
@@ -74,7 +132,7 @@ function bq_mult(A::AbstractMatrix, B::BatchQuantity)
 end
 
 
-function ChainRules.rrule(::typeof(bq_mult), A, B)
+function ChainRules.rrule(::typeof(bq_mult), A::AbstractMatrix, B::BatchQuantity)
 
     Z = bq_mult(A,B)
 
@@ -190,9 +248,3 @@ function ChainRules.rrule(cra::ColRangeAgg, Z, A)
 
 end
 
-#row_batches = repeat(1:5, inner=(2,))
-#col_batches = repeat(1:2, inner=(5,))
-#values = reshape(collect(1:10), (5,2))
-#
-#my_bq = BatchQuantity(values,row_batches,col_batches)
-#println("INITIALIZED BQ")
