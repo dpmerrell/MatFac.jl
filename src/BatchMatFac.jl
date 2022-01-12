@@ -2,12 +2,14 @@ module BatchMatFac
 
 using ChainRules, Zygote, CUDA, HDF5, LinearAlgebra
 
-
+include("typedefs.jl")
 include("util.jl")
-include("custom_ops.jl")
-include("link_functions.jl")
-include("model.jl")
-include("losses.jl")
-include("data_loader.jl")
+include("block_matrix.jl")
+include("col_block_map.jl")
+include("batch_iter.jl")
+
+include("noise_models.jl")
+include("model_def.jl")
+include("model_core.jl")
 
 end # module

@@ -1,140 +1,97 @@
 
-
-
-NOISE_MODELS = ["normal","logistic","poisson"]
+export total_loss
 
 
 ####################################
 # LINK FUNCTIONS
 ####################################
 
-function quad_link!(Z::AbstractArray)
+function quad_link(Z::AbstractArray)
     return Z
 end
 
 
-function rrule!(::typeof(quad_link!), Z::AbstractArray)
+function logistic_link(Z::AbstractArray)
+    return 1 ./ (1 .+ exp.(-Z))
+end
 
-    quad_link!(Z)
-    function quad_link_pullback!(A_bar)
-        return # Do nothing!
+
+function ChainRules.rrule(::typeof(logistic_link), Z)
+    A = logistic_link(Z)
+
+    function logistic_link_pullback(A_bar)
+        return ChainRules.NoTangent(), A_bar .* (A .* (1 .- A))
     end
-    return quad_link_pullback!
+    return A, logistic_link_pullback
 end
 
 
-function logistic_link!(Z::AbstractArray)
-    Z .*= -1
-    Z .= exp.(Z)
-    Z .+= 1
-    Z .= 1/Z
-    return Z 
+function poisson_link(Z::AbstractArray)
+    return exp.(Z)
 end
 
 
-function rrule!(::typeof(logistic_link!), Z::AbstractArray, output_buffer::AbstractArray)
-    logistic_link!(Z)
-    output_buffer .= Z
-    function logistic_link_pullback!(A_bar)
-        A_bar .*= output_buffer .* (1 .- output_buffer)
-        return
-    end
-    return logistic_link_pullback!
-end
-
-
-function poisson_link!(Z::AbstractArray)
-    Z .= exp.(Z)
-    return Z
-end
-
-
-function rrule!(::typeof(poisson_link!), Z::AbstractArray, output_buffer::AbstractArray)
-    poisson_link!(Z)
-    output_buffer .= Z
-    function poisson_link_pullback!(A_bar)
-        A_bar .*= output_buffer 
-        return
-    end
-    return poisson_link_pullback!
-end
-
-
-LINK_FUNCTION_MAP = Dict("normal"=>quad_link!,
-                         "logistic"=>logistic_link!,
-                         "poisson"=>poisson_link!
-                         )
+LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
+                         "logistic"=>logistic_link,
+                         "poisson"=>poisson_link
+                        )
 
 
 ####################################
 # LOSS FUNCTIONS
 ####################################
 
-function quad_loss!(A::AbstractArray, D::AbstractArray)
-    A .-= D
-    A .= A.^2
-    return A
+function quad_loss(A::AbstractArray, D::AbstractArray)
+    return BMFFloat(0.5).*(A .- D).^2
 end
 
-function rrule!(::typeof(quad_loss!), A::AbstractArray, D::AbstractArray, buffer::AbstractArray)
-    A .-= D
-    buffer .= A
-    A .= A.^2
-
-    function quad_loss_pullback!(err_bar)
-        err_bar .*= 2.0f0 .* buffer 
-    end
-
-    return quad_loss_pullback!
-end
-
-
-function logistic_loss!(A::AbstractArray, D::AbstractArray, buffer::AbstractArray)
-    buffer .= 1 .- A
-
-    A .= log.(A)
-    A .*= D
-
-    buffer .= log.(buffer)
-    buffer .*= (1 .- D)
-
-    A .+= buffer
-    return  A 
-end
-
-function rrule!(::typeof(logistic_loss!), A::AbstractArray, D::AbstractArray, buffer::AbstractArray)
+function ChainRules.rrule(::typeof(quad_loss), A, D)
     
-    logistic_loss!(A, D, buffer)
+    diff = A .- D
 
-    function logistic_loss_pullback!(err_bar)
-        err_bar .*= (1 .- D)./(1 .- A) - D./A
+    function quad_loss_pullback(loss_bar)
+        return ChainRules.NoTangent(), loss_bar.*diff, ChainRules.NoTangent() 
     end
 
-    return logistic_loss_pullback!
+    return BMFFloat(0.5).*(diff.^2), quad_loss_pullback 
 end
 
 
-function poisson_loss!(A::AbstractArray, D::AbstractArray)
-    A .-= (D.*log.(A))
-    return A 
+function logistic_loss(A::AbstractArray, D::AbstractArray)
+    return -D .* log.(A) .- (1 .- D) .* log.( 1 .- A)
 end
 
 
-function rrule!(::typeof(poisson_loss!), A::AbstractArray, D::AbstractArray)
-    poisson_loss!(A,D)
+function ChainRules.rrule(::typeof(logistic_loss), A, D)
+    loss = logistic_loss(A,D)
 
-    function poisson_loss_pullback!(err_bar)
-        err_bar .*= (1 .- D./A)
+    function logistic_loss_pullback(loss_bar)
+        A_bar = loss_bar .* (D./A .+ (1 .- D)./(1 .- D))
+        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent()
     end
-    return poisson_loss_pullback!
-
+    return loss, logistic_loss_pullback 
 end
 
 
-LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss!,
-                         "logistic"=>logistic_loss!,
-                         "poisson"=>poisson_loss!
+function poisson_loss(A::AbstractArray, D::AbstractArray)
+    return A .- D.*log.(A)
+end
+
+
+function ChainRules.rrule(::typeof(poisson_loss), A, D)
+    
+    loss = poisson_loss(A, D)
+
+    function poisson_loss_pullback(loss_bar)
+        A_bar = loss_bar .* (1 .- D ./ A)
+        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent() 
+    end
+
+    return loss, poisson_loss_pullback 
+end
+
+
+LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
+                         "logistic"=>logistic_loss,
+                         "poisson"=>poisson_loss
                          )
-
-
-

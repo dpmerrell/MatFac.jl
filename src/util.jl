@@ -38,13 +38,3 @@ function ids_to_ranges(id_vec)
 end
 
 
-#a = [1,1,3,1,2,2,2,1,2,2,3,3,3,2,3,3,3,1,3,3,3]
-#
-#ranges = ids_to_ranges(a)
-#
-#println("IDS: ")
-#println(a)
-#
-#
-#println("RANGES:")
-#println(ranges)
