@@ -32,9 +32,32 @@ function ids_to_ranges(id_vec)
     unique_ids = unique(id_vec)
     start_idx = indexin(unique_ids, id_vec)
     end_idx = length(id_vec) .- indexin(unique_ids, reverse(id_vec)) .+ 1
-    ranges = [start:finish for (start,finish) in zip(start_idx, end_idx)]
+    ranges = BMFRange[start:finish for (start,finish) in zip(start_idx, end_idx)]
 
     return ranges
 end
 
+
+
+function subset_ranges(ranges::Vector, rng::UnitRange) 
+    
+    r_min = rng.start
+    r_max = rng.stop
+    @assert r_min <= r_max
+
+    @assert r_min >= ranges[1].start
+    @assert r_max <= ranges[end].stop
+
+    starts = [rr.start for rr in ranges]
+    r_min_idx = searchsorted(starts, r_min).stop
+    
+    stops = [rr.stop for rr in ranges]
+    r_max_idx = searchsorted(stops, r_max).start
+
+    new_ranges = ranges[r_min_idx:r_max_idx]
+    new_ranges[1] = r_min:new_ranges[1].stop
+    new_ranges[end] = new_ranges[end].start:r_max
+
+    return new_ranges, r_min_idx, r_max_idx
+end
 

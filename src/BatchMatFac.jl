@@ -11,5 +11,6 @@ include("batch_iter.jl")
 include("noise_models.jl")
 include("model_def.jl")
 include("model_core.jl")
+include("fit.jl")
 
 end # module

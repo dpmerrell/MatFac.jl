@@ -1,6 +1,6 @@
 
 
-import Base: size, getindex, setindex!, view
+import Base: size, getindex, setindex!, view, transpose
 
 
 ##########################################
@@ -10,6 +10,18 @@ mutable struct BlockMatrix
     values::AbstractMatrix
     row_ranges::Vector{UnitRange}
     col_ranges::Vector{UnitRange}
+end
+
+
+function ChainRules.rrule(::typeof(BlockMatrix), values::AbstractMatrix,
+                                                 row_ranges::Vector{UnitRange},
+                                                 col_ranges::Vector{UnitRange})
+    function BlockMatrix_pullback(bm_bar)
+        return ChainRules.NoTangent(), bm_bar, ChainRules.NoTangent(), ChainRules.NoTangent()
+    end
+
+    return BlockMatrix(values, row_ranges, col_ranges), BlockMatrix_pullback
+
 end
 
 
@@ -23,6 +35,7 @@ function block_matrix(values::AbstractMatrix, row_block_ids::Vector, col_block_i
 end
 
 
+
 ######################################
 # "size" operator
 function size(A::BlockMatrix)
@@ -33,82 +46,25 @@ end
 
 ######################################
 # "getindex" operator
-# For now, we only select rows.
-# All columns are included.
-function getindex(A::BlockMatrix, row_range::UnitRange)
+function getindex(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
 
     r_min = row_range.start
-    r_max = row_range.stop
-    @assert r_min <= r_max
-
-    @assert r_min >= A.row_ranges[1].start
-    @assert r_max <= A.row_ranges[end].stop
-
-    row_starts = [rr.start for rr in A.row_ranges]
-    r_min_idx = searchsorted(row_starts, r_min).stop
-    
-    row_stops = [rr.stop for rr in A.row_ranges]
-    r_max_idx = searchsorted(row_stops, r_max).start
-
-    new_row_ranges = A.row_ranges[r_min_idx:r_max_idx]
-    new_row_ranges[1] = r_min:new_row_ranges[1].stop
-    new_row_ranges[end] = new_row_ranges[end].start:r_max
-
+    new_row_ranges, r_min_idx, r_max_idx = subset_ranges(A.row_ranges, row_range)
     new_row_ranges = [(rng.start - r_min + 1):(rng.stop - r_min + 1) for rng in new_row_ranges]
+    
+    c_min = col_range.start
+    new_col_ranges, c_min_idx, c_max_idx = subset_ranges(A.col_ranges, col_range)
+    new_col_ranges = [(rng.start - c_min + 1):(rng.stop - c_min + 1) for rng in new_col_ranges]
 
-    return BlockMatrix(A.values[r_min_idx:r_max_idx,:],
-                         new_row_ranges,
-                         A.col_ranges)
+    return BlockMatrix(A.values[r_min_idx:r_max_idx, c_min_idx:c_max_idx],
+                       new_row_ranges, new_col_ranges)
 end
 
-
-###############################
-## "setindex" operator
-#function setindex!(A::BlockMatrix, B::BlockMatrix, I::UnitRange)
-#    
-#    @assert size(B) == (I.stop - I.start + 1)
-#    
-#    # Locate the index of the first A.value touched by B
-#    A_starts = Int[rng.start for rng in A.row_ranges]
-#    A_stops = Int[rng.stop for rng in A.row_ranges]
-#    B_starts = Int[rng.start for rng in B.row_ranges]
-#    B_stops = Int[rng.stop for rng in B.row_ranges]
-#  
-#    # Initialize the A_idx and B_idx 
-#    if A_starts[1] == B_starts[1]
-#        A_idx = 1
-#        B_idx = 1
-#    elseif A_starts[1] < B_starts[1]
-#        B_idx = 1
-#        A_idx = searchsorted(A_starts, B_starts[1]).stop
-#    else
-#        A_idx = 1
-#        B_idx = searchsorted(B_starts, A_starts[1]).stop
-#    end
-#
-#    # Iterate through the subsequent A_idxs, B_idxs
-#    while (A_idx <= length(A_starts)) & (B_idx <= length(B_starts)) 
-#
-#        # Compute the fraction of current A covered by
-#        # current B
-#        overlap = (min(A_stops[A_idx], B_stops[B_idx]) - max(A_starts[A_idx], B_starts[B_idx]) + 1)/(A_stops[A_idx] - A_starts[A_idx] + 1)
-#
-#        # Update the current A value by the current B value
-#        A.values[A_idx,:] .+= (overlap .* B.values[B_idx,:])
-#
-#        # Update the A_idx or B_idx
-#        if A_stops[A_idx] == B_stops[B_idx]
-#            A_idx += 1
-#            B_idx += 1
-#        elseif A_stops[A_idx] < B_stops[B_idx]
-#            A_idx += 1
-#        else
-#            B_idx += 1
-#        end
-#    end
-#
-#    
-#end
+####################################
+# "transpose" operation
+function transpose(A::BlockMatrix)
+    return BlockMatrix(transpose(A.values), A.col_ranges, A.row_ranges)
+end
 
 #########################
 # Equality operator
@@ -150,9 +106,7 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BlockMatrix)
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, ChainRules.Tangent{BlockMatrix}(;values=B_bar, 
-                                                                               row_ranges=copy(B.row_ranges), 
-                                                                               col_ranges=copy(B.col_ranges))
+        return ChainRules.NoTangent(), A_bar, B_bar
     end
     return Z, bm_add_pullback
 end
@@ -162,11 +116,11 @@ end
 # Each block of A is updated by the overlapping blocks of B,
 # weighted by the fraction covered by each of them.
 # Used during "fit" to update the model's block parameters. 
-function add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
+function row_add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
 
     @assert size(B)[1] == (A_rows.stop - A_rows.start + 1)
 
-    # Locate the index of the first A.value touched by B
+    # Locate the row index of the first A.value touched by B
     A_starts = Int[rng.start for rng in A.row_ranges]
     A_stops =  Int[rng.stop for rng in A.row_ranges]
     B_starts = Int[rng.start + A_rows.start - 1 for rng in B.row_ranges]
@@ -210,6 +164,10 @@ function add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
 
 end
 
+function col_add!(A::BlockMatrix, A_cols::UnitRange, B::BlockMatrix)
+    row_add!(transpose(A), A_cols, transpose(B))
+end
+
 
 ##########################################
 # "BATCH QUANTITY" MULTIPLICATION 
@@ -243,10 +201,9 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BlockMatrix)
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, ChainRules.Tangent{BlockMatrix}(;values=B_bar, 
-                                                                               row_ranges=copy(B.row_ranges), 
-                                                                               col_ranges=copy(B.col_ranges))
+        return ChainRules.NoTangent(), A_bar, B_bar 
     end
+
     return Z, bm_mult_pullback
 end
 

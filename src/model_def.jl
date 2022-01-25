@@ -8,17 +8,17 @@ mutable struct BatchMatFacModel
         X::BMFMat
         Y::BMFMat
 
-        X_reg::AbstractVector{BMFMat}
-        Y_reg::AbstractVector{BMFMat}
+        X_reg::AbstractVector{BMFRegMat}
+        Y_reg::AbstractVector{BMFRegMat}
 
         mu::BMFVec
-        sigma::BMFVec
+        log_sigma::BMFVec
 
         mu_reg::BMFRegMat
-        sigma_reg::BMFRegMat
+        log_sigma_reg::BMFRegMat
 
-        theta::BlockMatrix
-        delta::BlockMatrix
+        theta::AbstractMatrix
+        log_delta::AbstractMatrix
 
         sample_group_ids::AbstractVector
         feature_group_ids::AbstractVector
@@ -29,7 +29,7 @@ mutable struct BatchMatFacModel
 end
 
 
-function BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
+function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
                           sample_block_ids, feature_block_ids,
                           feature_loss_names)
 
@@ -41,28 +41,26 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
 
     my_randn = CUDA.randn
     my_ones = CUDA.ones
+    my_zeros = CUDA.zeros
 
     # These may be on the GPU or CPU
     X = my_randn(BMFFloat, K,M) ./ BMFFloat(10.0*sqrt(K))
     Y = my_randn(BMFFloat, K,N) ./ BMFFloat(10.0*sqrt(K))
     mu = my_randn(BMFFloat, N) ./ BMFFloat(100.0)
-    sigma = my_ones(BMFFloat, N)
+    log_sigma = my_zeros(BMFFloat, N)
 
     n_sample_blocks = length(unique(sample_block_ids))
     n_feature_blocks = length(unique(feature_block_ids))
 
-    # These will always be on the CPU -- they're relatively small
-    theta_value = randn(BMFFloat, n_sample_blocks, n_feature_blocks) ./ BMFFloat(100.0)
-    theta = block_matrix(theta_value, sample_block_ids, feature_block_ids) 
-    delta_value = ones(BMFFloat, n_sample_blocks, n_feature_blocks)
-    delta = block_matrix(delta_value, sample_block_ids, feature_block_ids) 
+    theta = randn(BMFFloat, n_sample_blocks, n_feature_blocks) ./ BMFFloat(100.0)
+    log_delta = zeros(BMFFloat, n_sample_blocks, n_feature_blocks)
 
     link_function_map = ColBlockMap([LINK_FUNCTION_MAP[ln] for ln in unique(feature_loss_names)], feature_loss_names)
     loss_function_map = ColBlockAgg([LOSS_FUNCTION_MAP[ln] for ln in unique(feature_loss_names)], feature_loss_names)
 
     return BatchMatFacModel(X, Y, X_reg, Y_reg, 
-                            mu, sigma, mu_reg, sigma_reg,
-                            theta, delta, 
+                            mu, log_sigma, mu_reg, log_sigma_reg,
+                            theta, log_delta, 
                             sample_block_ids, feature_block_ids,
                             link_function_map, loss_function_map)
 

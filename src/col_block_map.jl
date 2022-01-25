@@ -1,5 +1,6 @@
 
 
+import Base: getindex
 
 
 ####################################
@@ -16,6 +17,16 @@ function ColBlockMap(funcs, col_block_ids::AbstractVector{String})
     return ColBlockMap(funcs, col_blocks)
 end
 
+
+function getindex(cbm::ColBlockMap, rng::UnitRange)
+    
+    new_ranges, r_min_idx, r_max_idx = subset_ranges(cbm.col_blocks, rng)
+
+    new_ranges = [(r.start - rng.start + 1):(r.stop - rng.start + 1) for r in new_ranges]
+
+    return ColBlockMap(cbm.funcs[r_min_idx:r_max_idx], new_ranges)
+
+end
 
 function (cbm::ColBlockMap)(Z::AbstractMatrix)
 
@@ -72,6 +83,17 @@ function (cba::ColBlockAgg)(Z::AbstractMatrix, A::AbstractMatrix)
         result[:, rng] .= fn(Z[:,rng], A[:,rng])
     end
     return result
+end
+
+
+function getindex(cba::ColBlockAgg, rng::UnitRange)
+    
+    new_ranges, r_min_idx, r_max_idx = subset_ranges(cba.col_blocks, rng)
+
+    new_ranges = [(r.start - rng.start + 1):(r.stop - rng.start + 1) for r in new_ranges]
+
+    return ColBlockAgg(cba.funcs[r_min_idx:r_max_idx], new_ranges)
+
 end
 
 
