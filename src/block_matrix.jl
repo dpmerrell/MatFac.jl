@@ -60,6 +60,22 @@ function getindex(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
                        new_row_ranges, new_col_ranges)
 end
 
+######################################
+# "getindex" operator
+function view(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
+
+    r_min = row_range.start
+    new_row_ranges, r_min_idx, r_max_idx = subset_ranges(A.row_ranges, row_range)
+    new_row_ranges = [(rng.start - r_min + 1):(rng.stop - r_min + 1) for rng in new_row_ranges]
+    
+    c_min = col_range.start
+    new_col_ranges, c_min_idx, c_max_idx = subset_ranges(A.col_ranges, col_range)
+    new_col_ranges = [(rng.start - c_min + 1):(rng.stop - c_min + 1) for rng in new_col_ranges]
+
+    return BlockMatrix(view(A.values, r_min_idx:r_max_idx, c_min_idx:c_max_idx),
+                       new_row_ranges, new_col_ranges)
+end
+
 ####################################
 # "transpose" operation
 function transpose(A::BlockMatrix)

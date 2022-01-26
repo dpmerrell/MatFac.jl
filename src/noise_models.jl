@@ -12,7 +12,9 @@ end
 
 
 function logistic_link(Z::AbstractArray)
-    return 1 ./ (1 .+ exp.(-Z))
+    # We shrink the value slightly toward 0.5
+    # in order to prevent NaNs.
+    return 0.5f0 .+ (0.9999f0 .*(1 ./ (1 .+ exp.(-Z)) .- 0.5))
 end
 
 
@@ -66,7 +68,7 @@ function ChainRules.rrule(::typeof(logistic_loss), A, D)
     loss = logistic_loss(A,D)
 
     function logistic_loss_pullback(loss_bar)
-        A_bar = loss_bar .* (D./A .+ (1 .- D)./(1 .- D))
+        A_bar = loss_bar .* (D./A .+ (1 .- D)./(1 .- A))
         return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent()
     end
     return loss, logistic_loss_pullback 

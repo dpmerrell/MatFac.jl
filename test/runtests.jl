@@ -32,15 +32,25 @@ function block_matrix_tests()
         # Construction
         A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
     
-        @test A == BMF.BlockMatrix(r_matrix, UnitRange[1:2,3:5,6:6], UnitRange[1:2,3:7])
+        @test A == BMF.BlockMatrix(r_matrix, UnitRange[1:2,3:5,6:6], 
+                                             UnitRange[1:2,3:7])
         @test size(A) == (6,7)
+
+        # view
+        A_copy = BMF.BlockMatrix(copy(A.values), A.row_ranges, A.col_ranges)
+        A_view = view(A_copy, 3:6, 1:7)
+        @test A_view.row_ranges == [1:3, 4:4]
+        @test A_view.col_ranges == [1:2, 3:7]
+
+        A_view.values .+= 1.0
+        @test A_copy.values[2:3,:] == (A.values[2:3,:] .+ 1.0)
 
         # Getindex
         B = A[3:6, 1:7]
 
         @test B.row_ranges == [1:3, 4:4]
         @test B.col_ranges == [1:2, 3:7]
-        
+
         # Addition by dense matrix
         C = ones(6,7)
         D = C + A
@@ -105,7 +115,9 @@ function block_matrix_tests()
         C = ones(3,7)
         (grad_C, grad_B) = gradient((c,b)->sum(c*b), C, B)
         
-        @test grad_C == [ 2. 2. -2. -2. -2. -2. -2.; 3. 3. -3. -3. -3. -3. -3.; 3. 3. -3. -3. -3. -3. -3.]
+        @test grad_C == [ 2. 2. -2. -2. -2. -2. -2.; 
+                          3. 3. -3. -3. -3. -3. -3.; 
+                          3. 3. -3. -3. -3. -3. -3.]
         @test grad_B == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
 
     end
@@ -174,18 +186,22 @@ end
 
 function simulate_data(M, N, K, row_batches, n_logistic)
     
-    X = BMF.BMFMat(CUDA.randn(K, M))
-    Y = BMF.BMFMat(CUDA.randn(K, N))
+    X = BMF.BMFMat(CUDA.randn(K, M) .* 0.01)
+    Y = BMF.BMFMat(CUDA.randn(K, N) .* 0.01)
     
-    log_sigma = BMF.BMFVec(1 .+ CUDA.randn(N))
-    mu = BMF.BMFVec(CUDA.randn(N))
+    log_sigma = BMF.BMFVec(CUDA.randn(N) .* 0.01)
+    mu = BMF.BMFVec(CUDA.randn(N) .* 0.01)
 
     n_batches = length(unique(row_batches))
-    theta = randn(n_batches, 2)
-    log_delta = 1 .+ randn(n_batches,2)
+    theta = randn(n_batches, 2) .* 0.1
+    log_delta = randn(n_batches, 2) .* 0.1
 
     noise_models = [repeat(["logistic"], n_logistic);repeat(["normal"], N-n_logistic)]
-    noise_map = BMF.ColBlockMap([BMF.logistic_link, BMF.quad_link], noise_models)
+    if n_logistic > 0
+        noise_map = BMF.ColBlockMap([BMF.logistic_link, BMF.quad_link], noise_models)
+    else
+        noise_map = BMF.ColBlockMap([BMF.quad_link], noise_models)
+    end
 
     row_batch_ranges = BMF.ids_to_ranges(row_batches)
     col_batch_ranges = BMF.ids_to_ranges(noise_models) 
@@ -193,6 +209,12 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     A = BMF.forward(X, Y, mu, log_sigma, theta, log_delta,
                    row_batch_ranges, col_batch_ranges,
                    noise_map)
+
+    if n_logistic > 0
+        A_logistic = view(A, :, 1:n_logistic)
+        A_logistic[A_logistic .>= 0.5] .= 1.0
+        A_logistic[A_logistic .< 0.5] .= 0.0
+    end
 
     return X, Y, log_sigma, mu, log_delta, theta, A
 end
@@ -216,11 +238,6 @@ function model_core_tests()
     N = 2000
     K = 100
     n_batches = 4
-
-    #row_batches = repeat(1:10, inner=div(M,10))
-    #n_logistic = div(N,2)
-    #feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
-
 
     X = CUDA.zeros(K,M)
     Y = CUDA.zeros(K,N)
@@ -362,17 +379,23 @@ function model_core_tests()
 end
 
 
+
 function fit_tests()
 
-    M = 1000
-    N = 2000
-    K = 100
-    
+    #M = 1000
+    #N = 2000
+    #K = 100
+    M = 20
+    N = 10
+    K = 5
+    n_batches = 4
+
     X_reg, Y_reg, mu_reg, sigma_reg = generate_regularizers(M, N, K)
     
-    sample_batch_ids = repeat(1:10, inner=div(M,10))
+    sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
 
     n_logistic = div(N,2)
+    #n_logistic = 0
     feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
     
     my_model = BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
@@ -383,8 +406,17 @@ function fit_tests()
     test_log_sigma, test_mu, 
     test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
 
-    BMF.fit!(my_model, A)
+    println("A")
+    println(A)
 
+    println("TEST THETA")
+    println(test_theta)
+    println("TEST_LOG_DELTA")
+    println(test_log_delta)
+
+    BMF.fit!(my_model, A; max_epochs=100, capacity=M*N, lr=0.0005)#div(M*N,2))
+
+    println(my_model)
     #function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     #              capacity::Integer=1e8, max_epochs::Integer=1000, 
     #              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9)
