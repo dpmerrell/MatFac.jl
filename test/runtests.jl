@@ -425,15 +425,93 @@ function fit_tests()
 end
 
 
+# Define some straightforward equality operators
+function Base.:(==)(a::BMF.CuSparseMatrixCSC, b::BMF.CuSparseMatrixCSC)
+    return SparseMatrixCSC(a) == SparseMatrixCSC(b)
+end
+
+
+function Base.:(==)(model_a::BMF.BMFModel, model_b::BMF.BMFModel)
+    for fn in fieldnames(BMFModel)
+        if !(getproperty(model_a, fn) == getproperty(model_b, fn)) 
+            return false
+        end
+    end
+    return true
+end
+
+
+function io_tests()
+
+    test_hdf_path = "test.hdf"
+
+    # Some simpler objects
+    my_scalar = 3.14159
+    str_vec = ["cat", "dog", "fish"]
+    num_vec = [1.0, 2.0, 3.0]
+    spmat = sprand(10,10,0.2)
+    spmat_vec = [sprand(10,10,0.2) for _=1:5]
+
+    # The model object
+    M = 20
+    N = 10
+    K = 5
+    n_batches = 4
+    X_reg, Y_reg, mu_reg, sigma_reg = generate_regularizers(M, N, K)
+    sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
+    n_logistic = div(N,2)
+    feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
+    my_model = BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
+                                sample_batch_ids, feature_loss_names,
+                                feature_loss_names)
+
+
+    # Write tests
+    @testset "File IO" begin
+        h5open(test_hdf_path, "w") do file
+      
+            write(file, "/my_scalar", my_scalar)
+            write(file, "/str_vec", str_vec)
+            write(file, "/num_vec", num_vec)
+            write(file, "/spmat", spmat)
+            write(file, "/spmat_vec", spmat_vec)
+            write(file, "/my_model", my_model)
+
+        end
+
+        h5open(test_hdf_path, "r") do file
+            
+            sc = BMF.readtype(file, "/my_scalar", Float64)
+            @test sc == my_scalar
+
+            sv = BMF.readtype(file, "/str_vec", Vector{String})
+            @test sv == str_vec
+
+            nv = BMF.readtype(file, "/num_vec", Vector{Float64})
+            @test nv == num_vec
+
+            sp = BMF.readtype(file, "/spmat", SparseMatrixCSC)
+            @test sp == spmat
+
+            spv = BMF.readtype(file, "/spmat_vec", Vector{SparseMatrixCSC})
+            @test spv == spmat_vec
+
+            mdl = BMF.readtype(file, "/my_model", BMF.BMFModel)
+            @test mdl == my_model
+        end
+    end
+
+end
 
 
 function main()
    
-    #util_tests()
-    #block_matrix_tests()
-    #col_block_map_tests()
-    #model_core_tests()
+    util_tests()
+    block_matrix_tests()
+    col_block_map_tests()
+    model_core_tests()
     fit_tests()
+    io_tests()
 
 end
 

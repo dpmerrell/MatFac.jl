@@ -19,6 +19,13 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_batch_size = div(capacity,N)
     col_batch_size = div(capacity,M)
 
+    # Construct the feature noise models.
+    # Column-specific link and loss functions
+    unq_noises = unique(model.feature_noise_models) 
+    feature_link_map = ColBlockMap([LINK_FUNCTION_MAP[ln] for ln in unq_noises],
+                                   model.feature_noise_models)
+    feature_loss_map = ColBlockAgg([LOSS_FUNCTION_MAP[ln] for ln in unq_noises], 
+                                   model.feature_noise_models)
 
     # Curry away the regularizers from the 
     # prior function
@@ -53,10 +60,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
             batch_frac = (row_batch.stop - row_batch.start+1)/M
             
-            # figure out the blocks of rows affected by this minibatch
-            #r_block_ranges, r_block_min, r_block_max = subset_ranges(sample_group_ranges, row_batch) 
-            #_, r_block_min, r_block_max = subset_ranges(sample_group_ranges, row_batch) 
-
             # Select the corresponding rows of X, theta, delta
             batch_X = view(model.X, :, row_batch)
             #batch_theta = model.theta[r_block_min:r_block_max, :]
@@ -74,8 +77,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                                          theta, log_delta,
                                                                          batch_theta.row_ranges,
                                                                          batch_theta.col_ranges,
-                                                                         model.feature_link_map, 
-                                                                         model.feature_loss_map,
+                                                                         feature_link_map, 
+                                                                         feature_loss_map,
                                                                          batch_A)
 
             # Compute the likelihood loss gradients w.r.t. Y, mu, sigma, theta, delta
@@ -85,11 +88,11 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                                      model.log_sigma, 
                                                                      batch_theta.values,
                                                                      batch_log_delta.values)
-            print_if_nan(grad_Y, "GRAD_Y") 
-            print_if_nan(grad_mu, "GRAD_MU") 
-            print_if_nan(grad_log_sigma, "GRAD_LOG_SIGMA") 
-            print_if_nan(grad_theta, "GRAD_THETA") 
-            print_if_nan(grad_log_delta, "GRAD_LOG_DELTA") 
+            #print_if_nan(grad_Y, "GRAD_Y") 
+            #print_if_nan(grad_mu, "GRAD_MU") 
+            #print_if_nan(grad_log_sigma, "GRAD_LOG_SIGMA") 
+            #print_if_nan(grad_theta, "GRAD_THETA") 
+            #print_if_nan(grad_log_delta, "GRAD_LOG_DELTA") 
 
             # Updates for the batch parameters
             grad_theta_block_matrix = BlockMatrix(grad_theta, batch_theta.row_ranges,
@@ -102,19 +105,17 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             grad_log_delta_block_matrix.values .*= -lr
             row_add!(log_delta_block_matrix, row_batch, grad_log_delta_block_matrix)
 
-            #model.theta[r_block_min:r_block_max, :] .-= lr .* grad_theta
-            #model.log_delta[r_block_min:r_block_max, :] .-= lr .* grad_log_delta
 
             # Likelihood-gradient updates for the other parameters
             model.Y .-= lr .* grad_Y
             model.mu .-= lr .* grad_mu
             model.log_sigma .-= lr .* grad_log_sigma
 
-            print_if_nan(model.Y, "model_Y") 
-            print_if_nan(model.mu, "model_MU") 
-            print_if_nan(model.log_sigma, "model_LOG_SIGMA") 
-            print_if_nan(model.theta, "model_THETA") 
-            print_if_nan(model.log_delta, "model_LOG_DELTA")
+            #print_if_nan(model.Y, "model_Y") 
+            #print_if_nan(model.mu, "model_MU") 
+            #print_if_nan(model.log_sigma, "model_LOG_SIGMA") 
+            #print_if_nan(model.theta, "model_THETA") 
+            #print_if_nan(model.log_delta, "model_LOG_DELTA")
 
             # Compute the prior loss gradients w.r.t. Y, mu, and sigma
             # (multiply by fraction of rows in minibatch (row_batch.stop-row_batch.start+1)/M)
@@ -139,9 +140,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             
             batch_frac = (col_batch.stop - col_batch.start+1)/N
             
-            # figure out the blocks of columns affected by this minibatch
-            #c_block_ranges, c_block_min, c_block_max = subset_ranges(feature_group_ranges, col_batch) 
-
             # Select the corresponding columns of Y, mu, sigma, theta, delta
             batch_Y = view(model.Y, :, col_batch)
             batch_mu = view(model.mu, col_batch)
@@ -154,8 +152,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             # Select the corresponding columns of A
             batch_A = CuArray(view(A, :, col_batch))
            
-            batch_link_map = model.feature_link_map[col_batch]
-            batch_loss_map = model.feature_loss_map[col_batch]
+            batch_link_map = feature_link_map[col_batch]
+            batch_loss_map = feature_loss_map[col_batch]
 
             # Curry away the non-updated variables
             col_batch_log_lik = X -> neg_log_likelihood(X, batch_Y, 
@@ -170,10 +168,10 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             
             # Compute the likelihood loss gradients w.r.t. X
             grad_X = gradient(col_batch_log_lik, model.X)[1]
-            print_if_nan(grad_X, "GRAD_X") 
+            #print_if_nan(grad_X, "GRAD_X") 
 
             model.X .-= lr .* grad_X
-            print_if_nan(model.X, "model_X") 
+            #print_if_nan(model.X, "model_X") 
 
             # Compute the prior loss gradients w.r.t. X
             # (multiply by fraction of columns in minibatch, (col_batch.stop-col_batch.start+1)/N)
@@ -187,7 +185,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
         end
 
-        #push!(history, epoch_loss)
     end
 
     return #history

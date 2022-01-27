@@ -6,4 +6,5 @@ BMFVec = CuVector{BMFFloat}
 BMFData = AbstractMatrix
 BMFRange = UnitRange
 
+CuSparseMatrixCSC = CUDA.CUSPARSE.CuSparseMatrixCSC
 

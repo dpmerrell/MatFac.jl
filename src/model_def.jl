@@ -1,6 +1,6 @@
 
 
-export BatchMatFacModel, forward
+export BatchMatFacModel
 
 
 mutable struct BatchMatFacModel
@@ -8,8 +8,8 @@ mutable struct BatchMatFacModel
         X::BMFMat
         Y::BMFMat
 
-        X_reg::AbstractVector{BMFRegMat}
-        Y_reg::AbstractVector{BMFRegMat}
+        X_reg::Vector{BMFRegMat}
+        Y_reg::Vector{BMFRegMat}
 
         mu::BMFVec
         log_sigma::BMFVec
@@ -17,18 +17,22 @@ mutable struct BatchMatFacModel
         mu_reg::BMFRegMat
         log_sigma_reg::BMFRegMat
 
-        theta::AbstractMatrix
-        log_delta::AbstractMatrix
+        theta::Matrix{<:Number}
+        log_delta::Matrix{<:Number}
 
-        sample_group_ids::AbstractVector
-        feature_group_ids::AbstractVector
+        sample_group_ids::Vector{<:Union{Number,String}}
+        feature_group_ids::Vector{<:Union{Number,String}}
 
-        feature_link_map::ColBlockMap
-        feature_loss_map::ColBlockAgg
+        feature_noise_models::Vector{String}
 
 end
 
 
+# Define an alias
+BMFModel = BatchMatFacModel
+
+
+# Define a convenience constructor
 function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
                           sample_block_ids, feature_block_ids,
                           feature_loss_names)
@@ -55,14 +59,11 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
     theta = randn(BMFFloat, n_sample_blocks, n_feature_blocks) ./ BMFFloat(100.0)
     log_delta = zeros(BMFFloat, n_sample_blocks, n_feature_blocks)
 
-    link_function_map = ColBlockMap([LINK_FUNCTION_MAP[ln] for ln in unique(feature_loss_names)], feature_loss_names)
-    loss_function_map = ColBlockAgg([LOSS_FUNCTION_MAP[ln] for ln in unique(feature_loss_names)], feature_loss_names)
-
     return BatchMatFacModel(X, Y, X_reg, Y_reg, 
                             mu, log_sigma, mu_reg, log_sigma_reg,
                             theta, log_delta, 
                             sample_block_ids, feature_block_ids,
-                            link_function_map, loss_function_map)
+                            feature_loss_names)
 
 end
 

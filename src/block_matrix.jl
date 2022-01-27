@@ -1,6 +1,6 @@
 
 
-import Base: size, getindex, setindex!, view, transpose
+import Base: size, getindex, view, transpose, map!
 
 
 ##########################################
@@ -35,6 +35,13 @@ function block_matrix(values::AbstractMatrix, row_block_ids::Vector, col_block_i
 end
 
 
+######################################
+# zero function
+function Base.zero(A::BlockMatrix)
+    return BlockMatrix(zero(A.values), copy(A.row_ranges),
+                                       copy(A.col_ranges))
+end
+
 
 ######################################
 # "size" operator
@@ -61,7 +68,7 @@ function getindex(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
 end
 
 ######################################
-# "getindex" operator
+# view operator
 function view(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
 
     r_min = row_range.start
@@ -76,21 +83,45 @@ function view(A::BlockMatrix, row_range::UnitRange, col_range::UnitRange)
                        new_row_ranges, new_col_ranges)
 end
 
+
+#######################################
+# reindex operation
+function reindex!(A::BlockMatrix, new_row_start::Integer, new_col_start::Integer)
+
+    r_delta = new_row_start - A.row_ranges[1].start
+    c_delta = new_col_start - A.col_ranges[1].start
+    A.row_ranges = [(r.start + r_delta):(r.stop + r_delta) for r in A.row_ranges]
+    A.col_ranges = [(r.start + r_delta):(r.stop + r_delta) for r in A.col_ranges]
+
+end
+
+
 ####################################
-# "transpose" operation
+# transpose operation
 function transpose(A::BlockMatrix)
     return BlockMatrix(transpose(A.values), A.col_ranges, A.row_ranges)
 end
 
-#########################
+
+####################################
 # Equality operator
 function Base.:(==)(A::BlockMatrix, B::BlockMatrix)
-    return (A.values == B.values) & (A.row_ranges == B.row_ranges) & (A.col_ranges == B.col_ranges)
+    return ((A.values == B.values) & 
+            (A.row_ranges == B.row_ranges) & 
+            (A.col_ranges == B.col_ranges))
+end
+
+
+####################################
+# Map mutator operation
+function Base.map!(f::Function, destination::BlockMatrix, 
+                                collection::BlockMatrix)
+    map!(f, destination.values, collection.values) 
 end
 
 
 ##########################################
-# "BATCH QUANTITY" ADDITION 
+# ADDITION 
 ##########################################
 
 # Used during the model's "forward" mode
@@ -128,19 +159,13 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BlockMatrix)
 end
 
 
-# Update A by adding B to the given rows.
-# Each block of A is updated by the overlapping blocks of B,
-# weighted by the fraction covered by each of them.
-# Used during "fit" to update the model's block parameters. 
-function row_add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
-
-    @assert size(B)[1] == (A_rows.stop - A_rows.start + 1)
+function add!(A::BlockMatrix, B::BlockMatrix)
 
     # Locate the row index of the first A.value touched by B
     A_starts = Int[rng.start for rng in A.row_ranges]
     A_stops =  Int[rng.stop for rng in A.row_ranges]
-    B_starts = Int[rng.start + A_rows.start - 1 for rng in B.row_ranges]
-    B_stops =  Int[rng.stop + A_rows.start - 1 for rng in B.row_ranges]
+    B_starts = Int[rng.start for rng in B.row_ranges]
+    B_stops =  Int[rng.stop for rng in B.row_ranges]
   
     # Initialize the A_idx and B_idx 
     if A_starts[1] == B_starts[1]
@@ -179,6 +204,21 @@ function row_add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
     end
 
 end
+
+
+# Update A by adding B to the given rows.
+# Each block of A is updated by the overlapping blocks of B,
+# weighted by the fraction covered by each of them.
+# Used during "fit" to update the model's block parameters. 
+function row_add!(A::BlockMatrix, A_rows::UnitRange, B::BlockMatrix)
+
+    @assert size(B)[1] == (A_rows.stop - A_rows.start + 1)
+
+    reindex!(B, A_rows.start, 1)
+    add!(A, B)
+    reindex!(B, 1, 1)
+end
+
 
 function col_add!(A::BlockMatrix, A_cols::UnitRange, B::BlockMatrix)
     row_add!(transpose(A), A_cols, transpose(B))
