@@ -1,6 +1,6 @@
 
 
-mutable struct ModelParams
+mutable struct ModelParams 
 
     X::BMFMat
     Y::BMFMat
@@ -14,7 +14,7 @@ mutable struct ModelParams
 end
 
 
-# Create a ModelParams object from a Model object
+# Create a YParams object from a Model object
 function ModelParams(model::BMFModel)
 
     row_ranges = ids_to_ranges(model.sample_group_ids)
@@ -31,37 +31,72 @@ function ModelParams(model::BMFModel)
                       )
 end
 
+
+function Base.map(f::Function, collection::ModelParams; 
+                  fields::Union{Nothing,Vector{Symbol}}=nothing)
+    values = []
+    if fields == nothing
+        fields = propertynames(collection)
+    end
+    for pn in fields 
+        push!(values, map(f, getproperty(collection, pn)))
+    end
+    return typeof(collection)(values...)
+end
+
+
 # Create a copy of mp with all 
 # values set to zero
 function Base.zero(mp::ModelParams)
-    values = []
-    for pn in propertynames(mp)
-        push!(values, zero(getproperty(mp, pn)))
-    end
-    return ModelParams(values...)
+    return map(zero, mp)
 end
 
 
 function Base.map!(f::Function, destination::ModelParams, 
-                   collection::ModelParams)
+                   collection::ModelParams;
+                   fields::Union{Nothing,Vector{Symbol}}=nothing)
 
-    for pn in propertynames(destination)
+    if fields == nothing
+        fields = propertynames(collection)
+    end
+
+    for pn in fields 
         map!(f, getproperty(destination, pn), 
                 getproperty(collection, pn))
     end
-
 end
 
 
-function add!(a::AbstractArray, b::AbstractArray)
-    a .+= b
+######################################
+# DEFINE ARITHMETIC OPERATIONS
+function binop!(op::Function, a::AbstractArray, b::AbstractArray)
+    a .= op(a, b)
 end
 
 
-# Add b to a, mutating a
-function add!(a::ModelParams, b::ModelParams)
-    for pn in propertynames(a)
-        add!(getproperty(a, pn), getproperty(b,pn))
+function binop!(op::Function, a::AbstractArray, b::Number)
+    a .= op(a, b)
+end
+
+function binop!(op::Function, a::ModelParams, b::ModelParams;
+                fields::Union{Nothing,Vector{Symbol}}=nothing)
+    
+    if fields == nothing
+        fields = propertynames(a)
+    end
+    for pn in fields
+        binop!(op, getproperty(a, pn), getproperty(b,pn))
+    end
+end
+
+function binop!(op::Function, a::ModelParams, b::Number;
+                fields::Union{Nothing,Vector{Symbol}}=nothing)
+    
+    if fields == nothing
+        fields = propertynames(a)
+    end
+    for pn in fields 
+        binop!(op, getproperty(a, pn), b)
     end
 end
 

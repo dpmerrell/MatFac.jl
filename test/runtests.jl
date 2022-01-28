@@ -91,15 +91,6 @@ function block_matrix_tests()
         BMF.col_add!(A, 2:4, B)
         @test A.values == [1.5 1.4; 2.5 2.4; 3.5 4.4]
 
-        ## Additive column update (partially overlapping blocks)
-        #A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
-        #B = A[2:4, 1:7]
-        #B.values = [2. -2.; 3. -3.]
-        #BMF.row_add!(A, 2:4, B)
-
-        #@test A.values == [2. 0.; 4. 0.; 3. 4.]
-     
-
         # Backpropagation for addition
         A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
         B = A[2:4, 1:7]
@@ -109,7 +100,7 @@ function block_matrix_tests()
         (grad_D, grad_B) = gradient((d,b)->sum(d+b), D_view, B)
         
         @test grad_D == ones(3,7)
-        @test grad_B == [2. 5.; 4. 10.] # Just the number of entries for each value 
+        @test grad_B.values == [2. 5.; 4. 10.] # Just the number of entries for each value 
 
         # Backpropagation for multiplication
         C = ones(3,7)
@@ -118,7 +109,7 @@ function block_matrix_tests()
         @test grad_C == [ 2. 2. -2. -2. -2. -2. -2.; 
                           3. 3. -3. -3. -3. -3. -3.; 
                           3. 3. -3. -3. -3. -3. -3.]
-        @test grad_B == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
+        @test grad_B.values == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
 
     end
 
@@ -193,8 +184,8 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     mu = BMF.BMFVec(CUDA.randn(N) .* 0.01)
 
     n_batches = length(unique(row_batches))
-    theta = randn(n_batches, 2) .* 0.1
-    log_delta = randn(n_batches, 2) .* 0.1
+    theta_values = randn(n_batches, 2) .* 0.1
+    log_delta_values = randn(n_batches, 2) .* 0.1
 
     noise_models = [repeat(["logistic"], n_logistic);repeat(["normal"], N-n_logistic)]
     if n_logistic > 0
@@ -206,8 +197,10 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     row_batch_ranges = BMF.ids_to_ranges(row_batches)
     col_batch_ranges = BMF.ids_to_ranges(noise_models) 
 
+    theta = BMF.BlockMatrix(theta_values, row_batch_ranges, col_batch_ranges)
+    log_delta = BMF.BlockMatrix(log_delta_values, row_batch_ranges, col_batch_ranges)
+
     A = BMF.forward(X, Y, mu, log_sigma, theta, log_delta,
-                   row_batch_ranges, col_batch_ranges,
                    noise_map)
 
     if n_logistic > 0
@@ -250,8 +243,10 @@ function model_core_tests()
     col_batches = repeat(1:2, inner=n_logistic)
     col_batch_ranges = BMF.ids_to_ranges(col_batches)
 
-    log_delta = zeros(BMF.BMFFloat, n_batches, 2)
-    theta = zeros(BMF.BMFFloat, n_batches, 2)
+    log_delta = BMF.BlockMatrix(zeros(BMF.BMFFloat, n_batches, 2),
+                                row_batch_ranges, col_batch_ranges)
+    theta = BMF.BlockMatrix(zeros(BMF.BMFFloat, n_batches, 2),
+                            row_batch_ranges, col_batch_ranges)
 
     feature_link_map = BMF.ColBlockMap(Function[BMF.logistic_link, BMF.quad_link],
                                        col_batch_ranges)
@@ -261,8 +256,6 @@ function model_core_tests()
         # Computation
         A = BMF.forward(X, Y, mu, log_sigma, 
                         theta, log_delta,
-                        row_batch_ranges,
-                        col_batch_ranges,
                         feature_link_map)
        
         test_A = CUDA.zeros(M,N)
@@ -274,8 +267,6 @@ function model_core_tests()
         curried_forward_sum = (X, Y, mu, log_sigma,
                                theta, log_delta) -> sum(BMF.forward(X, Y, mu, log_sigma, 
                                                                     theta, log_delta,
-                                                                    row_batch_ranges,
-                                                                    col_batch_ranges,
                                                                     feature_link_map))
        
         grad_X, grad_Y, grad_mu, grad_log_sigma,
@@ -293,16 +284,15 @@ function model_core_tests()
         test_grad_theta = zeros(n_batches, 2)
         test_grad_theta[:,1] .= 0.25 * n_logistic * div(M,n_batches)
         test_grad_theta[:,2] .= n_logistic * div(M,n_batches)
-        @test grad_theta == test_grad_theta
+        @test grad_theta.values == test_grad_theta
        
         test_grad_sigma = CUDA.zeros(N)
         @test grad_log_sigma == test_grad_sigma
 
         test_grad_delta = zeros(n_batches,2)
-        @test grad_log_delta == test_grad_delta
+        @test grad_log_delta.values == test_grad_delta
 
     end
-
 
     feature_loss_map = BMF.ColBlockAgg(Function[BMF.logistic_loss, BMF.quad_loss],
                                        col_batch_ranges)
@@ -315,8 +305,6 @@ function model_core_tests()
         # Computation
         loss = BMF.neg_log_likelihood(X, Y, mu, log_sigma, 
                                       theta, log_delta,
-                                      row_batch_ranges,
-                                      col_batch_ranges,
                                       feature_link_map, 
                                       feature_loss_map, D)
         @test isapprox(loss, n_logistic * M * log(2))
@@ -327,8 +315,6 @@ function model_core_tests()
         curried_loss = (X, Y, mu, log_sigma, 
                         theta, log_delta) -> BMF.neg_log_likelihood(X, Y, mu, log_sigma, 
                                                                     theta, log_delta,
-                                                                    row_batch_ranges,
-                                                                    col_batch_ranges,
                                                                     feature_link_map, 
                                                                     feature_loss_map, new_D)
         grad_X, grad_Y, grad_mu, grad_log_sigma,
@@ -344,8 +330,8 @@ function model_core_tests()
         @test grad_log_sigma == CUDA.zeros(N)
         test_grad_theta = zeros(n_batches,2)
         test_grad_theta[:,1] .= Float32(0.5 * n_logistic * div(M,n_batches))
-        @test grad_theta == test_grad_theta
-        @test grad_log_delta == zeros(n_batches, 2)
+        @test grad_theta.values == test_grad_theta
+        @test grad_log_delta.values == zeros(n_batches, 2)
 
     end
 
@@ -379,6 +365,46 @@ function model_core_tests()
 end
 
 
+function adagrad_tests()
+
+    X = zeros(5,10)
+    Y = zeros(5,20)
+
+    mu = zeros(10)
+    log_sigma = zeros(10)
+
+    theta = BMF.BlockMatrix(zeros(4,2),[1:5,6:10,11:15,16:20],
+                                       [1:10,11:20])
+    log_delta = BMF.BlockMatrix(zeros(4,2),[1:5,6:10,11:15,16:20],
+                                           [1:10,11:20])
+
+    params = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
+
+    adagrad = BMF.adagrad_updater(params; epsilon=0.01)
+
+    grads = map(x-> x .+ 1, params)
+
+    println("PARAMS")
+    println(params)
+    println("GRADS")
+    println(grads)
+    println("ADAGRAD")
+    println(adagrad)
+
+    @testset "AdaGrad" begin
+        
+        adagrad(params, grads)
+
+        println("PARAMS")
+        println(params)
+        println("GRADS")
+        println(grads)
+        println("ADAGRAD")
+        println(adagrad)
+    end
+
+end
+
 
 function fit_tests()
 
@@ -395,7 +421,6 @@ function fit_tests()
     sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
 
     n_logistic = div(N,2)
-    #n_logistic = 0
     feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
     
     my_model = BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
@@ -414,7 +439,7 @@ function fit_tests()
     println("TEST_LOG_DELTA")
     println(test_log_delta)
 
-    BMF.fit!(my_model, A; max_epochs=100, capacity=M*N, lr=0.0005)#div(M*N,2))
+    BMF.fit!(my_model, A; max_epochs=200, capacity=M*N, lr=0.01)
 
     println(my_model)
     #function fit!(model::BatchMatFacModel, A::AbstractMatrix;
@@ -432,7 +457,7 @@ end
 
 
 function Base.:(==)(model_a::BMF.BMFModel, model_b::BMF.BMFModel)
-    for fn in fieldnames(BMFModel)
+    for fn in fieldnames(BMF.BMFModel)
         if !(getproperty(model_a, fn) == getproperty(model_b, fn)) 
             return false
         end
@@ -506,12 +531,13 @@ end
 
 function main()
    
-    util_tests()
-    block_matrix_tests()
-    col_block_map_tests()
-    model_core_tests()
+    #util_tests()
+    #block_matrix_tests()
+    #col_block_map_tests()
+    #model_core_tests()
+    adagrad_tests()
     fit_tests()
-    io_tests()
+    #io_tests()
 
 end
 

@@ -19,6 +19,13 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_batch_size = div(capacity,N)
     col_batch_size = div(capacity,M)
 
+    # Objects representing parameters and gradients
+    params = ModelParams(model)
+    gradients = map(zero, params)
+
+    # AdaGrad update rule
+    adagrad = adagrad_updater(params) 
+
     # Construct the feature noise models.
     # Column-specific link and loss functions
     unq_noises = unique(model.feature_noise_models) 
@@ -27,31 +34,22 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     feature_loss_map = ColBlockAgg([LOSS_FUNCTION_MAP[ln] for ln in unq_noises], 
                                    model.feature_noise_models)
 
-    # Curry away the regularizers from the 
-    # prior function
+    # Some useful curries of the prior function
     curried_prior = (X, Y, mu, log_sigma) -> neg_log_prior(X, model.X_reg, 
                                                            Y, model.Y_reg, 
                                                            mu, model.mu_reg, 
                                                            log_sigma, 
                                                            model.log_sigma_reg)
-
-
-    sample_group_ranges = ids_to_ranges(model.sample_group_ids)
-    feature_group_ranges = ids_to_ranges(model.feature_group_ids)
-
-    theta_block_matrix = BlockMatrix(view(model.theta,:,:), 
-                                     sample_group_ranges,
-                                     feature_group_ranges)
-    log_delta_block_matrix = BlockMatrix(view(model.log_delta,:,:), 
-                                         sample_group_ranges,
-                                         feature_group_ranges)
+    row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
+    col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
 
     # For each epoch
     for epoch=1:max_epochs
-   
+  
+        # Zero out the gradients
+        map!(zero, gradients, gradients)
 
         println(string("EPOCH ", epoch))
-        #println(model)
 
         # Updates for column-wise and block-wise parameters:
         # Y, mu, sigma, theta, delta
@@ -61,11 +59,9 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             batch_frac = (row_batch.stop - row_batch.start+1)/M
             
             # Select the corresponding rows of X, theta, delta
-            batch_X = view(model.X, :, row_batch)
-            #batch_theta = model.theta[r_block_min:r_block_max, :]
-            #batch_log_delta = model.log_delta[r_block_min:r_block_max, :]
-            batch_theta = theta_block_matrix[row_batch, 1:N]
-            batch_log_delta = log_delta_block_matrix[row_batch, 1:N]
+            batch_X = view(params.X, :, row_batch)
+            batch_theta = params.theta[row_batch, 1:N]
+            batch_log_delta = params.log_delta[row_batch, 1:N]
 
             # Select the corresponding rows of A
             batch_A = CuArray(view(A, row_batch, :))
@@ -75,79 +71,57 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                  theta, log_delta) -> neg_log_likelihood(batch_X, Y, 
                                                                          mu, log_sigma, 
                                                                          theta, log_delta,
-                                                                         batch_theta.row_ranges,
-                                                                         batch_theta.col_ranges,
                                                                          feature_link_map, 
                                                                          feature_loss_map,
                                                                          batch_A)
 
-            # Compute the likelihood loss gradients w.r.t. Y, mu, sigma, theta, delta
+            # Compute the batch's likelihood loss gradients 
+            # w.r.t. Y, mu, sigma, theta, delta
             grad_Y, grad_mu, grad_log_sigma,
-            grad_theta, grad_log_delta = gradient(row_batch_log_lik, model.Y, 
-                                                                     model.mu,
-                                                                     model.log_sigma, 
-                                                                     batch_theta.values,
-                                                                     batch_log_delta.values)
-            #print_if_nan(grad_Y, "GRAD_Y") 
-            #print_if_nan(grad_mu, "GRAD_MU") 
-            #print_if_nan(grad_log_sigma, "GRAD_LOG_SIGMA") 
-            #print_if_nan(grad_theta, "GRAD_THETA") 
-            #print_if_nan(grad_log_delta, "GRAD_LOG_DELTA") 
+            grad_theta, grad_log_delta = gradient(row_batch_log_lik, params.Y, 
+                                                                     params.mu,
+                                                                     params.log_sigma, 
+                                                                     batch_theta,
+                                                                     batch_log_delta)
 
-            # Updates for the batch parameters
-            grad_theta_block_matrix = BlockMatrix(grad_theta, batch_theta.row_ranges,
-                                                              batch_theta.col_ranges)
-            grad_theta_block_matrix.values .*= -lr
-            row_add!(theta_block_matrix, row_batch, grad_theta_block_matrix) 
+            # Accumulate these gradients into the full gradients
+            gradients.Y .+= grad_Y
+            gradients.mu .+= grad_mu
+            gradients.log_sigma .+= grad_log_sigma
+                        
+            reindex!(grad_theta, row_batch.start, 1)
+            add!(gradients.theta, grad_theta)
+            reindex!(grad_log_delta, row_batch.start, 1)
+            add!(gradients.log_delta, grad_log_delta)
 
-            grad_log_delta_block_matrix = BlockMatrix(grad_log_delta, batch_theta.row_ranges,
-                                                                      batch_theta.col_ranges)
-            grad_log_delta_block_matrix.values .*= -lr
-            row_add!(log_delta_block_matrix, row_batch, grad_log_delta_block_matrix)
-
-
-            # Likelihood-gradient updates for the other parameters
-            model.Y .-= lr .* grad_Y
-            model.mu .-= lr .* grad_mu
-            model.log_sigma .-= lr .* grad_log_sigma
-
-            #print_if_nan(model.Y, "model_Y") 
-            #print_if_nan(model.mu, "model_MU") 
-            #print_if_nan(model.log_sigma, "model_LOG_SIGMA") 
-            #print_if_nan(model.theta, "model_THETA") 
-            #print_if_nan(model.log_delta, "model_LOG_DELTA")
-
-            # Compute the prior loss gradients w.r.t. Y, mu, and sigma
-            # (multiply by fraction of rows in minibatch (row_batch.stop-row_batch.start+1)/M)
-            row_batch_prior = (Y, mu, log_sigma) -> curried_prior(model.X, Y, mu, log_sigma)
-            grad_Y, grad_mu, grad_log_sigma = gradient(row_batch_prior, 
-                                                       model.Y,
-                                                       model.mu,
-                                                       model.log_sigma)
-
-            # Prior-gradient updates 
-            model.Y .-= (batch_frac*lr) .* grad_Y
-            model.mu .-= (batch_frac*lr) .* grad_mu
-            model.log_sigma .-= (batch_frac*lr) .* grad_log_sigma
-        
-            println(string("\t", row_batch, " Y, MU, SIGMA, THETA, DELTA UPDATES FINISHED"))
         end
 
+        # Compute prior gradients for Y, mu, sigma
+        grad_Y, grad_mu, grad_log_sigma = gradient(row_prior, 
+                                                   params.Y,
+                                                   params.mu,
+                                                   params.log_sigma)
+        # Add prior gradients to full Y, mu, sigma gradients
+        gradients.Y .+= grad_Y
+        gradients.mu .+= grad_mu
+        gradients.log_sigma .+= grad_log_sigma
+
+        # Perform AdaGrad updates for Y, mu, sigma, theta, delta
+        adagrad(params, gradients; lr=lr, 
+                fields=[:Y, :mu, :log_sigma, :theta, :log_delta])
+
+        println("\tUPDATES FINISHED FOR Y, mu, sigma, theta, delta")
 
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
         for col_batch in BatchIter(N, col_batch_size)
             
-            batch_frac = (col_batch.stop - col_batch.start+1)/N
-            
             # Select the corresponding columns of Y, mu, sigma, theta, delta
-            batch_Y = view(model.Y, :, col_batch)
-            batch_mu = view(model.mu, col_batch)
-            batch_log_sigma = view(model.log_sigma, col_batch)
-            #batch_theta = model.theta[:,c_block_min:c_block_max]
-            #batch_log_delta = model.log_delta[:,c_block_min:c_block_max]
-            batch_theta = theta_block_matrix[1:M, col_batch]
-            batch_log_delta = log_delta_block_matrix[1:M, col_batch]
+            batch_Y = view(params.Y, :, col_batch)
+            batch_mu = view(params.mu, col_batch)
+            batch_log_sigma = view(params.log_sigma, col_batch)
+            batch_theta = params.theta[1:M, col_batch]
+            batch_log_delta = params.log_delta[1:M, col_batch]
 
             # Select the corresponding columns of A
             batch_A = CuArray(view(A, :, col_batch))
@@ -158,33 +132,32 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             # Curry away the non-updated variables
             col_batch_log_lik = X -> neg_log_likelihood(X, batch_Y, 
                                                         batch_mu, batch_log_sigma,
-                                                        batch_theta.values, 
-                                                        batch_log_delta.values,
-                                                        batch_theta.row_ranges,
-                                                        batch_theta.col_ranges,
+                                                        batch_theta, 
+                                                        batch_log_delta,
                                                         batch_link_map, 
                                                         batch_loss_map, 
                                                         batch_A)
             
             # Compute the likelihood loss gradients w.r.t. X
-            grad_X = gradient(col_batch_log_lik, model.X)[1]
-            #print_if_nan(grad_X, "GRAD_X") 
+            grad_X = gradient(col_batch_log_lik, params.X)[1]
 
-            model.X .-= lr .* grad_X
-            #print_if_nan(model.X, "model_X") 
-
-            # Compute the prior loss gradients w.r.t. X
-            # (multiply by fraction of columns in minibatch, (col_batch.stop-col_batch.start+1)/N)
-            col_batch_prior = X -> curried_prior(X, model.Y, model.mu, model.log_sigma)
-            grad_X = gradient(col_batch_prior, model.X)[1]
-
-            # Update X according to the update rule
-            model.X .-= (batch_frac * lr) .* grad_X
-            
-            println(string("\t", col_batch, " X UPDATES FINISHED"))
+            # Add to the full gradient
+            gradients.X .+= grad_X
 
         end
+        
+        # Compute prior gradient for X 
+        grad_X = gradient(col_prior, params.X)[1]
 
+        # Add prior gradient to full X gradient
+        gradients.X .+= grad_X
+
+        # Perform AdaGrad update for X
+        adagrad(params, gradients; lr=lr, fields=[:X])
+        
+        println("\tUPDATE FINISHED FOR X")
+
+        #println(params)
     end
 
     return #history

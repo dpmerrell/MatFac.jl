@@ -2,23 +2,16 @@
 
 
 function forward(X::AbstractMatrix, Y::AbstractMatrix, mu::AbstractVector, log_sigma::AbstractVector, 
-                 theta::AbstractMatrix, log_delta::AbstractMatrix,
-                 row_batches::Vector{UnitRange},
-                 col_batches::Vector{UnitRange},
-                 feature_link_map::ColBlockMap)
+                 theta::BlockMatrix, log_delta::BlockMatrix, feature_link_map::ColBlockMap)
 
     sigma = exp.(log_sigma)
-
-    delta = exp.(log_delta)
-    delta_bmat = BlockMatrix(delta, row_batches, col_batches)
-    
-    theta_bmat = BlockMatrix(theta, row_batches, col_batches)
+    delta = exp(log_delta)
 
     Z = transpose(X)*Y
     Z = Z .* transpose(sigma)
     Z = Z .+ transpose(mu)
-    Z = Z * delta_bmat
-    Z = Z + theta_bmat
+    Z = Z * delta
+    Z = Z + theta
     A = feature_link_map(Z)
     return A
 end
@@ -26,14 +19,11 @@ end
 
 function neg_log_likelihood(X::AbstractMatrix, Y::AbstractMatrix, 
                             mu::AbstractVector, log_sigma::AbstractVector, 
-                            theta::AbstractMatrix, log_delta::AbstractMatrix,
-                            row_batches::Vector{UnitRange},
-                            col_batches::Vector{UnitRange},
+                            theta::BlockMatrix, log_delta::BlockMatrix,
                             feature_link_map::ColBlockMap, 
                             feature_loss_map::ColBlockAgg, D::AbstractMatrix)
 
-    A = forward(X, Y, mu, log_sigma, theta, log_delta, 
-                row_batches, col_batches, feature_link_map)
+    A = forward(X, Y, mu, log_sigma, theta, log_delta, feature_link_map)
     
     return sum(feature_loss_map(A, D))
 end
@@ -87,13 +77,11 @@ end
 function neg_log_prob(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_reg::Vector{T}, 
                       mu::AbstractVector, mu_reg::BMFRegMat, 
                       log_sigma::AbstractVector, log_sigma_reg::BMFRegMat,
-                      row_ranges::Vector{UnitRange}, col_ranges::Vector{UnitRange},
-                      theta::AbstractMatrix, log_delta::AbstractMatrix, 
+                      theta::BlockMatrix, log_delta::BlockMatrix, 
                       feature_link_map::ColBlockMap, feature_loss_map::ColBlockMap, 
                       D::AbstractMatrix) where T <: AbstractMatrix
 
     nlp = neg_log_likelihood(X, Y, mu, log_sigma, theta, log_delta,
-                             row_ranges, col_ranges,
                              feature_link_map, feature_loss_map, D)
     nlp += neg_log_prior(X, X_reg, Y, Y_reg, mu, mu_reg, log_sigma, log_sigma_reg)
 

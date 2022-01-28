@@ -13,16 +13,16 @@ mutable struct BlockMatrix
 end
 
 
-function ChainRules.rrule(::typeof(BlockMatrix), values::AbstractMatrix,
-                                                 row_ranges::Vector{UnitRange},
-                                                 col_ranges::Vector{UnitRange})
-    function BlockMatrix_pullback(bm_bar)
-        return ChainRules.NoTangent(), bm_bar, ChainRules.NoTangent(), ChainRules.NoTangent()
-    end
-
-    return BlockMatrix(values, row_ranges, col_ranges), BlockMatrix_pullback
-
-end
+#function ChainRules.rrule(::typeof(BlockMatrix), values::AbstractMatrix,
+#                                                 row_ranges::Vector{UnitRange},
+#                                                 col_ranges::Vector{UnitRange})
+#    function BlockMatrix_pullback(bm_bar)
+#        return ChainRules.NoTangent(), bm_bar, ChainRules.NoTangent(), ChainRules.NoTangent()
+#    end
+#
+#    return BlockMatrix(values, row_ranges, col_ranges), BlockMatrix_pullback
+#
+#end
 
 
 function block_matrix(values::AbstractMatrix, row_block_ids::Vector, col_block_ids::Vector)
@@ -113,10 +113,39 @@ end
 
 
 ####################################
-# Map mutator operation
+# Map operations
+function Base.map(f::Function, collection::BlockMatrix)
+    return BlockMatrix(map(f, collection.values),
+                       collection.row_ranges,
+                       collection.col_ranges)
+end
+
+
 function Base.map!(f::Function, destination::BlockMatrix, 
                                 collection::BlockMatrix)
     map!(f, destination.values, collection.values) 
+end
+
+
+##########################################
+# EXPONENTIATION
+##########################################
+function Base.exp(A::BlockMatrix)
+    return BlockMatrix(exp.(A.values), A.row_ranges,
+                                       A.col_ranges)
+end
+
+function ChainRules.rrule(::typeof(exp), A::BlockMatrix)
+
+    Z = exp(A)
+
+    function bm_exp_pullback(Z_bar::BlockMatrix)
+        return ChainRules.NoTangent(), BlockMatrix(Z_bar.values .* Z.values,
+                                                   Z_bar.row_ranges,
+                                                   Z_bar.col_ranges)
+    end
+
+    return Z, bm_exp_pullback
 end
 
 
@@ -146,14 +175,16 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BlockMatrix)
 
     function bm_add_pullback(Z_bar)
         A_bar = Z_bar
-        B_bar = zero(B.values)
+        B_bar_values = zero(B.values)
         for (i,row_range) in enumerate(B.row_ranges)
             for (j,col_range) in enumerate(B.col_ranges)
-                B_bar[i,j] = sum(Z_bar[row_range,col_range])
+                B_bar_values[i,j] = sum(Z_bar[row_range,col_range])
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, B_bar
+        return ChainRules.NoTangent(), A_bar, BlockMatrix(B_bar_values,
+                                                          B.row_ranges,
+                                                          B.col_ranges)
     end
     return Z, bm_add_pullback
 end
@@ -249,15 +280,17 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BlockMatrix)
 
     function bm_mult_pullback(Z_bar)
         A_bar = zero(A)
-        B_bar = zero(B.values)
+        B_bar_values = zero(B.values)
         for (i,row_range) in enumerate(B.row_ranges)
             for (j,col_range) in enumerate(B.col_ranges)
                 A_bar[row_range,col_range] .= (Z_bar[row_range,col_range] .* B.values[i,j])
-                B_bar[i,j] = sum(Z_bar[row_range,col_range] .* A[row_range,col_range])
+                B_bar_values[i,j] = sum(Z_bar[row_range,col_range] .* A[row_range,col_range])
             end
         end
 
-        return ChainRules.NoTangent(), A_bar, B_bar 
+        return ChainRules.NoTangent(), A_bar, BlockMatrix(B_bar_values,
+                                                          B.row_ranges,
+                                                          B.col_ranges)
     end
 
     return Z, bm_mult_pullback
