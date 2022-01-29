@@ -33,9 +33,15 @@ function poisson_link(Z::AbstractArray)
 end
 
 
+function noloss_link(Z::AbstractArray)
+    return Z
+end
+
+
 LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
                          "logistic"=>logistic_link,
-                         "poisson"=>poisson_link
+                         "poisson"=>poisson_link,
+                         "noloss"=>noloss_link
                         )
 
 
@@ -103,7 +109,15 @@ function ChainRules.rrule(::typeof(poisson_loss), A, D, missing_data)
 end
 
 
+function noloss_loss(A::AbstractArray, D::AbstractArray,
+                     missing_data::AbstractArray)
+
+    return zero(A)
+end
+
+
 LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
                          "logistic"=>logistic_loss,
-                         "poisson"=>poisson_loss
+                         "poisson"=>poisson_loss,
+                         "noloss"=>noloss_loss
                          )
