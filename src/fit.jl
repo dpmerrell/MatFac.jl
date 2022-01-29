@@ -1,10 +1,6 @@
 
 
-function print_if_nan(arr, name)
-    if !all(map(!, isnan.(arr)))
-        println(string(name, "\t", arr)) 
-    end
-end
+import ScikitLearnBase: fit! 
 
 
 function vprintln(a; verbose=false)

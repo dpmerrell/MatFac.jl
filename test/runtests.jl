@@ -1,5 +1,5 @@
 
-using Test, BatchMatFac, CUDA, Zygote, HDF5, SparseArrays, LinearAlgebra
+using Test, BatchMatFac, CUDA, Zygote, HDF5, SparseArrays, LinearAlgebra, ScikitLearnBase
 
 BMF = BatchMatFac
 
@@ -473,7 +473,7 @@ function fit_tests()
     test_log_sigma, test_mu, 
     test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
 
-    BMF.fit!(my_model, A; max_epochs=200, capacity=M*N, lr=0.01)
+    fit!(my_model, A; max_epochs=200, capacity=M*N, lr=0.01)
 
     # Just put an empty test here to show we run to completion
     @testset "Fit" begin
@@ -566,8 +566,8 @@ end
 
 function main()
    
-    #util_tests()
-    #block_matrix_tests()
+    util_tests()
+    block_matrix_tests()
     col_block_map_tests()
     model_params_tests()
     model_core_tests()
