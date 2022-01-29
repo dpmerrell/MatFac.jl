@@ -121,8 +121,8 @@ function col_block_map_tests()
     my_logistic =  x -> 1 ./ (1 .+ exp.(-x))
     my_exp = x -> exp.(x)
 
-    my_sqerr = (x,y) -> 0.5.*(x .- y).^2
-    my_binerr = (x,y) -> - y .* log.(x) - (1 .- y) .* log.(1 .- x)
+    my_sqerr = BMF.quad_loss #(x,y,m) -> 0.5.*(x .- y).^2
+    my_binerr = BMF.logistic_loss #(x,y,m) -> - y .* log.(x) - (1 .- y) .* log.(1 .- x)
 
     col_block_ids = ["cat", "cat", "dog", "dog", "dog"]
     
@@ -153,17 +153,18 @@ function col_block_map_tests()
     D = ones(2,5)
     test_losses = zeros(2,5)
     test_losses[:,1:2] .= -log(0.5)
-    
+    missing_data = zeros(Bool, size(D)...)
+
     @testset "ColBlockAgg" begin
 
         # Construction
         my_cba = BMF.ColBlockAgg([my_binerr, my_sqerr], col_block_ids)
         @test my_cba.col_blocks == [1:2, 3:5]
 
-        losses = my_cba(Y, D)
+        losses = my_cba(Y, D, missing_data)
         @test losses == test_losses 
 
-        grad = gradient(y-> sum(my_cba(y,D)), Y)[1]
+        grad = gradient(y-> sum(my_cba(y,D,missing_data)), Y)[1]
         correct_grad = zeros(2,5)
         correct_grad[:,1:2] .= -2.0
         
@@ -225,6 +226,54 @@ function generate_regularizers(M, N, K)
 end
 
 
+getvalues(a::BMF.BlockMatrix) = a.values
+getvalues(a::AbstractArray) = a
+
+
+function all_equal(mp::BMF.ModelParams, x::Number)
+
+    for pn in propertynames(mp)
+        arr = getvalues(getproperty(mp, pn))
+        if sum(isapprox.(arr, x)) != prod(size(arr)) 
+            return false
+        end
+    end
+
+    return true
+end
+
+
+function model_params_tests()
+
+    M = 10
+    N = 20
+    K = 5
+
+    X = zeros(K,M)
+    Y = zeros(K,N)
+    mu = zeros(N)
+    log_sigma = zeros(N)
+
+    theta = BMF.BlockMatrix(zeros(2,2),[1:5,6:10],[1:10,11:20])
+    log_delta = BMF.BlockMatrix(zeros(2,2),[1:5,6:10],[1:10,11:20])
+
+    a = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
+
+    @testset "ModelParams" begin
+
+        # map! test
+        map!(x -> x .+ 3.14, a, a)
+        @test all_equal(a, 3.14)
+        
+        # zero test
+        b = zero(a)
+        @test all_equal(b, 0.0) & all_equal(a, 3.14)
+
+    end
+
+end
+
+
 function model_core_tests()
     
     M = 1000
@@ -260,6 +309,7 @@ function model_core_tests()
        
         test_A = CUDA.zeros(M,N)
         test_A[:,1:n_logistic] .= 0.5
+
 
         @test A == test_A
 
@@ -299,6 +349,7 @@ function model_core_tests()
 
     D = CUDA.zeros(M,N)
     #D[:,1:n_logistic] .= 0.5
+    missing_data = zeros(Bool, size(D)...)
 
     @testset "Likelihood" begin
 
@@ -306,7 +357,7 @@ function model_core_tests()
         loss = BMF.neg_log_likelihood(X, Y, mu, log_sigma, 
                                       theta, log_delta,
                                       feature_link_map, 
-                                      feature_loss_map, D)
+                                      feature_loss_map, D, missing_data)
         @test isapprox(loss, n_logistic * M * log(2))
 
         # Gradient
@@ -316,20 +367,19 @@ function model_core_tests()
                         theta, log_delta) -> BMF.neg_log_likelihood(X, Y, mu, log_sigma, 
                                                                     theta, log_delta,
                                                                     feature_link_map, 
-                                                                    feature_loss_map, new_D)
+                                                                    feature_loss_map, new_D,
+                                                                    missing_data)
         grad_X, grad_Y, grad_mu, grad_log_sigma,
         grad_theta, grad_log_delta = gradient(curried_loss, X, Y, mu, log_sigma,
                                                             theta, log_delta)
       
-        # Compare autograd gradients against true (hand-calculated) gradients
+        # Compare autograd gradients against known, true gradients
         @test grad_X == CUDA.zeros(K,M)
         @test grad_Y == CUDA.zeros(K,N)
         test_grad_mu = CUDA.zeros(N)
-        test_grad_mu[1:n_logistic] .= Float32(M * 0.5)
         @test grad_mu == test_grad_mu 
         @test grad_log_sigma == CUDA.zeros(N)
         test_grad_theta = zeros(n_batches,2)
-        test_grad_theta[:,1] .= Float32(0.5 * n_logistic * div(M,n_batches))
         @test grad_theta.values == test_grad_theta
         @test grad_log_delta.values == zeros(n_batches, 2)
 
@@ -384,23 +434,15 @@ function adagrad_tests()
 
     grads = map(x-> x .+ 1, params)
 
-    println("PARAMS")
-    println(params)
-    println("GRADS")
-    println(grads)
-    println("ADAGRAD")
-    println(adagrad)
 
     @testset "AdaGrad" begin
-        
-        adagrad(params, grads)
+       
+        lr = 0.01
+        adagrad(params, grads; lr=lr)
+        @test all_equal(adagrad.sum_sq, 1.01)
+        @test all_equal(params, -lr/sqrt(1.01))
+        @test all_equal(grads, 1.0)
 
-        println("PARAMS")
-        println(params)
-        println("GRADS")
-        println(grads)
-        println("ADAGRAD")
-        println(adagrad)
     end
 
 end
@@ -431,21 +473,12 @@ function fit_tests()
     test_log_sigma, test_mu, 
     test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
 
-    println("A")
-    println(A)
-
-    println("TEST THETA")
-    println(test_theta)
-    println("TEST_LOG_DELTA")
-    println(test_log_delta)
-
     BMF.fit!(my_model, A; max_epochs=200, capacity=M*N, lr=0.01)
 
-    println(my_model)
-    #function fit!(model::BatchMatFacModel, A::AbstractMatrix;
-    #              capacity::Integer=1e8, max_epochs::Integer=1000, 
-    #              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9)
-
+    # Just put an empty test here to show we run to completion
+    @testset "Fit" begin
+        @test true
+    end
 
 end
 
@@ -526,6 +559,8 @@ function io_tests()
         end
     end
 
+    rm(test_hdf_path)
+
 end
 
 
@@ -533,11 +568,12 @@ function main()
    
     #util_tests()
     #block_matrix_tests()
-    #col_block_map_tests()
-    #model_core_tests()
+    col_block_map_tests()
+    model_params_tests()
+    model_core_tests()
     adagrad_tests()
     fit_tests()
-    #io_tests()
+    io_tests()
 
 end
 

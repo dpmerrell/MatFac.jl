@@ -43,50 +43,60 @@ LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
 # LOSS FUNCTIONS
 ####################################
 
-function quad_loss(A::AbstractArray, D::AbstractArray)
+function quad_loss(A::AbstractArray, D::AbstractArray, 
+                   missing_data::AbstractArray)
+    D[missing_data] .= A[missing_data]
     return BMFFloat(0.5).*(A .- D).^2
 end
 
-function ChainRules.rrule(::typeof(quad_loss), A, D)
-    
+function ChainRules.rrule(::typeof(quad_loss), A, D, missing_data)
+   
     diff = A .- D
+    diff[missing_data] .= 0
 
     function quad_loss_pullback(loss_bar)
-        return ChainRules.NoTangent(), loss_bar.*diff, ChainRules.NoTangent() 
+        return ChainRules.NoTangent(), loss_bar.*diff, ChainRules.NoTangent(),
+                                                       ChainRules.NoTangent()
     end
 
     return BMFFloat(0.5).*(diff.^2), quad_loss_pullback 
 end
 
 
-function logistic_loss(A::AbstractArray, D::AbstractArray)
+function logistic_loss(A::AbstractArray, D::AbstractArray,
+                       missing_data::AbstractArray)
+    D[missing_data] .= A[missing_data]
     return -D .* log.(A) .- (1 .- D) .* log.( 1 .- A)
 end
 
 
-function ChainRules.rrule(::typeof(logistic_loss), A, D)
-    loss = logistic_loss(A,D)
+function ChainRules.rrule(::typeof(logistic_loss), A, D, missing_data)
+    loss = logistic_loss(A,D,missing_data)
 
     function logistic_loss_pullback(loss_bar)
-        A_bar = loss_bar .* (D./A .+ (1 .- D)./(1 .- A))
-        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent()
+        A_bar = loss_bar .* (-D./A .+ (1 .- D)./(1 .- A))
+        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent(),
+                                              ChainRules.NoTangent()
     end
     return loss, logistic_loss_pullback 
 end
 
 
-function poisson_loss(A::AbstractArray, D::AbstractArray)
+function poisson_loss(A::AbstractArray, D::AbstractArray, 
+                      missing_data::AbstractArray)
+        D[missing_data] .= A[missing_data]
     return A .- D.*log.(A)
 end
 
 
-function ChainRules.rrule(::typeof(poisson_loss), A, D)
+function ChainRules.rrule(::typeof(poisson_loss), A, D, missing_data)
     
-    loss = poisson_loss(A, D)
+    loss = poisson_loss(A, D, missing_data)
 
     function poisson_loss_pullback(loss_bar)
         A_bar = loss_bar .* (1 .- D ./ A)
-        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent() 
+        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent(),
+                                              ChainRules.NoTangent()
     end
 
     return loss, poisson_loss_pullback 

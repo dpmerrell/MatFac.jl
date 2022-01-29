@@ -67,38 +67,4 @@ function Base.map!(f::Function, destination::ModelParams,
 end
 
 
-######################################
-# DEFINE ARITHMETIC OPERATIONS
-function binop!(op::Function, a::AbstractArray, b::AbstractArray)
-    a .= op(a, b)
-end
-
-
-function binop!(op::Function, a::AbstractArray, b::Number)
-    a .= op(a, b)
-end
-
-function binop!(op::Function, a::ModelParams, b::ModelParams;
-                fields::Union{Nothing,Vector{Symbol}}=nothing)
-    
-    if fields == nothing
-        fields = propertynames(a)
-    end
-    for pn in fields
-        binop!(op, getproperty(a, pn), getproperty(b,pn))
-    end
-end
-
-function binop!(op::Function, a::ModelParams, b::Number;
-                fields::Union{Nothing,Vector{Symbol}}=nothing)
-    
-    if fields == nothing
-        fields = propertynames(a)
-    end
-    for pn in fields 
-        binop!(op, getproperty(a, pn), b)
-    end
-end
-
-
 

@@ -76,11 +76,11 @@ function ColBlockAgg(funcs, col_block_ids::AbstractVector{String})
     return ColBlockAgg(funcs, col_blocks)
 end
 
-function (cba::ColBlockAgg)(Z::AbstractMatrix, A::AbstractMatrix)
+function (cba::ColBlockAgg)(Z::AbstractMatrix, A::AbstractMatrix, missing_data::AbstractMatrix)
 
     result = zero(Z) 
     for (i, (fn, rng)) in enumerate(zip(cba.funcs, cba.col_blocks))
-        result[:, rng] .= fn(Z[:,rng], A[:,rng])
+        result[:, rng] .= fn(view(Z,:,rng), view(A,:,rng), view(missing_data,:,rng))
     end
     return result
 end
@@ -97,23 +97,24 @@ function getindex(cba::ColBlockAgg, rng::UnitRange)
 end
 
 
-function ChainRules.rrule(cba::ColBlockAgg, Z, A)
+function ChainRules.rrule(cba::ColBlockAgg, Z, A, missing_data)
 
     result = zero(Z) 
     func_pullbacks = []
     for (i, (fn, rng)) in enumerate(zip(cba.funcs, cba.col_blocks))
-        (res, new_fn) = Zygote.pullback(fn, Z[:,rng], A[:,rng])
+        (res, new_fn) = Zygote.pullback(fn, view(Z,:,rng), view(A,:,rng), view(missing_data,:,rng))
         result[:,rng] .= res
         push!(func_pullbacks, new_fn)
     end
 
     function ColBlockAgg_pullback(result_bar)
-        Z_bar = zero(Z)
+        Z_bar = similar(Z)
         A_bar = ChainRules.ZeroTangent()
+        missing_data_bar = ChainRules.ZeroTangent()
         for (i,(pb, rng)) in enumerate(zip(func_pullbacks, cba.col_blocks))
-            Z_bar[:,rng] .= pb(result_bar[:,rng])[1]
+            Z_bar[:,rng] .= pb(view(result_bar,:,rng))[1]
         end
-        return ChainRules.NoTangent(), Z_bar, A_bar
+        return ChainRules.NoTangent(), Z_bar, A_bar, missing_data_bar
     end
 
     return result, ColBlockAgg_pullback

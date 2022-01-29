@@ -7,9 +7,17 @@ function print_if_nan(arr, name)
 end
 
 
+function vprintln(a; verbose=false)
+    if verbose
+        println(a)
+    end
+end
+
+
 function fit!(model::BatchMatFacModel, A::AbstractMatrix;
               capacity::Integer=Integer(1e8), max_epochs::Integer=1000, 
-              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9)
+              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9,
+              verbose::Bool=false)
 
 
     M = size(A,1)
@@ -21,7 +29,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
     # Objects representing parameters and gradients
     params = ModelParams(model)
-    gradients = map(zero, params)
+    gradients = zero(params)
 
     # AdaGrad update rule
     adagrad = adagrad_updater(params) 
@@ -43,28 +51,29 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
     col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
 
+    missing_data = isnan.(A)
+
     # For each epoch
     for epoch=1:max_epochs
   
         # Zero out the gradients
         map!(zero, gradients, gradients)
 
-        println(string("EPOCH ", epoch))
+        vprintln(string("EPOCH ", epoch); verbose=verbose)
 
         # Updates for column-wise and block-wise parameters:
         # Y, mu, sigma, theta, delta
         # Iterate through minibatches of rows
         for row_batch in BatchIter(M, row_batch_size)
 
-            batch_frac = (row_batch.stop - row_batch.start+1)/M
-            
             # Select the corresponding rows of X, theta, delta
             batch_X = view(params.X, :, row_batch)
             batch_theta = params.theta[row_batch, 1:N]
             batch_log_delta = params.log_delta[row_batch, 1:N]
 
-            # Select the corresponding rows of A
+            # Select the corresponding rows of A; move to GPU
             batch_A = CuArray(view(A, row_batch, :))
+            batch_missing_data = CuArray(view(missing_data, row_batch, :))
 
             # Curry away the non-updated variables
             row_batch_log_lik = (Y, mu, log_sigma, 
@@ -73,7 +82,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                                          theta, log_delta,
                                                                          feature_link_map, 
                                                                          feature_loss_map,
-                                                                         batch_A)
+                                                                         batch_A,
+                                                                         batch_missing_data)
 
             # Compute the batch's likelihood loss gradients 
             # w.r.t. Y, mu, sigma, theta, delta
@@ -110,7 +120,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         adagrad(params, gradients; lr=lr, 
                 fields=[:Y, :mu, :log_sigma, :theta, :log_delta])
 
-        println("\tUPDATES FINISHED FOR Y, mu, sigma, theta, delta")
+        vprintln("\tUPDATES FINISHED FOR Y, mu, sigma, theta, delta"; verbose=verbose)
 
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
@@ -125,6 +135,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
             # Select the corresponding columns of A
             batch_A = CuArray(view(A, :, col_batch))
+            batch_missing_data = CuArray(view(missing_data, :, col_batch))
            
             batch_link_map = feature_link_map[col_batch]
             batch_loss_map = feature_loss_map[col_batch]
@@ -136,7 +147,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                         batch_log_delta,
                                                         batch_link_map, 
                                                         batch_loss_map, 
-                                                        batch_A)
+                                                        batch_A,
+                                                        batch_missing_data)
             
             # Compute the likelihood loss gradients w.r.t. X
             grad_X = gradient(col_batch_log_lik, params.X)[1]
@@ -155,10 +167,11 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Perform AdaGrad update for X
         adagrad(params, gradients; lr=lr, fields=[:X])
         
-        println("\tUPDATE FINISHED FOR X")
+        vprintln("\tUPDATE FINISHED FOR X"; verbose=verbose)
 
-        #println(params)
     end
+
+    A[missing_data] .= NaN
 
     return #history
 end
