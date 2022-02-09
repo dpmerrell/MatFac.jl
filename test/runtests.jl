@@ -480,21 +480,6 @@ function fit_tests()
 end
 
 
-# Define some straightforward equality operators
-function Base.:(==)(a::BMF.CuSparseMatrixCSC, b::BMF.CuSparseMatrixCSC)
-    return SparseMatrixCSC(a) == SparseMatrixCSC(b)
-end
-
-
-function Base.:(==)(model_a::BMF.BMFModel, model_b::BMF.BMFModel)
-    for fn in fieldnames(BMF.BMFModel)
-        if !(getproperty(model_a, fn) == getproperty(model_b, fn)) 
-            return false
-        end
-    end
-    return true
-end
-
 
 function io_tests()
 

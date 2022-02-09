@@ -71,3 +71,19 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
 
 end
 
+
+# Define some straightforward equality operators
+function Base.:(==)(a::CuSparseMatrixCSC, b::CuSparseMatrixCSC)
+    return SparseMatrixCSC(a) == SparseMatrixCSC(b)
+end
+
+
+function Base.:(==)(model_a::BMFModel, model_b::BMFModel)
+    for fn in fieldnames(BMFModel)
+        if !(getproperty(model_a, fn) == getproperty(model_b, fn)) 
+            return false
+        end
+    end
+    return true
+end
+

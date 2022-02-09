@@ -1,6 +1,6 @@
 
 
-export save_hdf, load_hdf
+export save_hdf, model_from_hdf
 
 import Base: write
 
