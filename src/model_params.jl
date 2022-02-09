@@ -17,8 +17,8 @@ end
 # Create a YParams object from a Model object
 function ModelParams(model::BMFModel)
 
-    row_ranges = ids_to_ranges(model.sample_group_ids)
     col_ranges = ids_to_ranges(model.feature_group_ids)
+    row_ranges = [ids_to_ranges(v) for v in model.sample_group_ids]
 
     return ModelParams(model.X, model.Y,
                        model.mu, model.log_sigma,

@@ -25,30 +25,25 @@ function block_matrix_tests()
 
     @testset "BlockMatrix" begin
         
-        row_blocks = ["cat","cat","dog","dog","dog","fish"]
+        row_block_dict = Dict(1 => ["cat","cat","dog","dog","dog","fish"],
+                              2 => ["cat","cat","dog","dog","dog","fish"]
+                             )
         col_blocks = [1,1,2,2,2,2,2]
-        r_matrix = [1. 1.; 2. 2.; 3. 4.]
+        #r_matrix = [1. 1.; 2. 2.; 3. 4.]
+        r_matrix = [[1., 2., 3.],[1., 2., 4.]]
 
         # Construction
-        A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
+        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
     
-        @test A == BMF.BlockMatrix(r_matrix, UnitRange[1:2,3:5,6:6], 
+        @test A == BMF.BlockMatrix(r_matrix, [UnitRange[1:2,3:5,6:6],
+                                              UnitRange[1:2,3:5,6:6]],
                                              UnitRange[1:2,3:7])
         @test size(A) == (6,7)
-
-        # view
-        A_copy = BMF.BlockMatrix(copy(A.values), A.row_ranges, A.col_ranges)
-        A_view = view(A_copy, 3:6, 1:7)
-        @test A_view.row_ranges == [1:3, 4:4]
-        @test A_view.col_ranges == [1:2, 3:7]
-
-        A_view.values .+= 1.0
-        @test A_copy.values[2:3,:] == (A.values[2:3,:] .+ 1.0)
 
         # Getindex
         B = A[3:6, 1:7]
 
-        @test B.row_ranges == [1:3, 4:4]
+        @test B.row_ranges_vec == [[1:3, 4:4],[1:3,4:4]]
         @test B.col_ranges == [1:2, 3:7]
 
         # Addition by dense matrix
@@ -72,35 +67,31 @@ function block_matrix_tests()
         @test D == test_D
 
         # Additive row update (100% overlapping blocks)
-        B.values = [1. 1.; 1. 1.]
+        B.values = [[1., 1.], [1., 1.]]
         BMF.row_add!(A, 3:6, B)
-        @test A.values == [1. 1.; 3. 3.; 4. 5.]
+        @test A.values == [[1., 3., 4.], [1., 3., 5.]]
 
         # Additive row update (partially overlapping blocks)
-        A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
+        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
         B = A[2:4, 1:7]
-        B.values = [2. -2.; 3. -3.]
+        #B.values = [[2., -2.], [3., -3.]]
+        B.values = [[2., 3.],[-2.,-3.]]
         BMF.row_add!(A, 2:4, B)
 
-        @test A.values == [2. 0.; 4. 0.; 3. 4.]
-
-        # Additive column update (100% overlapping blocks)
-        A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
-        B = A[1:6, 2:4]
-        B.values = [1. 1.; 1. 1.; 1. 1.]
-        BMF.col_add!(A, 2:4, B)
-        @test A.values == [1.5 1.4; 2.5 2.4; 3.5 4.4]
+        @test A.values == [[2., 4., 3.], [0., 0., 4.]]
 
         # Backpropagation for addition
-        A = BMF.block_matrix(r_matrix, row_blocks, col_blocks)
+        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
         B = A[2:4, 1:7]
-        B.values = [2. -2.; 3. -3.]
+        #B.values = [2. -2.; 3. -3.]
+        B.values = [[2., 3.],[-2., -3.]]
         BMF.row_add!(A, 2:4, B)
         D_view = view(test_D, 2:4, :)
         (grad_D, grad_B) = gradient((d,b)->sum(d+b), D_view, B)
         
         @test grad_D == ones(3,7)
-        @test grad_B.values == [2. 5.; 4. 10.] # Just the number of entries for each value 
+        #@test grad_B.values == [2. 5.; 4. 10.] # Just the number of entries for each value 
+        @test grad_B.values == [[2., 4.],[5., 10.]] # Just the number of entries for each value 
 
         # Backpropagation for multiplication
         C = ones(3,7)
@@ -109,7 +100,8 @@ function block_matrix_tests()
         @test grad_C == [ 2. 2. -2. -2. -2. -2. -2.; 
                           3. 3. -3. -3. -3. -3. -3.; 
                           3. 3. -3. -3. -3. -3. -3.]
-        @test grad_B.values == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
+        #@test grad_B.values == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
+        @test grad_B.values == [[2., 4.],[5., 10.]]
 
     end
 
@@ -185,8 +177,8 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     mu = BMF.BMFVec(CUDA.randn(N) .* 0.01)
 
     n_batches = length(unique(row_batches))
-    theta_values = randn(n_batches, 2) .* 0.1
-    log_delta_values = randn(n_batches, 2) .* 0.1
+    theta_values = [randn(n_batches) .* 0.1 for _=1:2]
+    log_delta_values = [randn(n_batches) .* 0.1 for _=1:2]
 
     noise_models = [repeat(["logistic"], n_logistic);repeat(["normal"], N-n_logistic)]
     if n_logistic > 0
@@ -195,11 +187,9 @@ function simulate_data(M, N, K, row_batches, n_logistic)
         noise_map = BMF.ColBlockMap([BMF.quad_link], noise_models)
     end
 
-    row_batch_ranges = BMF.ids_to_ranges(row_batches)
-    col_batch_ranges = BMF.ids_to_ranges(noise_models) 
-
-    theta = BMF.BlockMatrix(theta_values, row_batch_ranges, col_batch_ranges)
-    log_delta = BMF.BlockMatrix(log_delta_values, row_batch_ranges, col_batch_ranges)
+    row_batch_dict = Dict("logistic" => row_batches, "normal" => row_batches)
+    theta = BMF.block_matrix(theta_values, row_batch_dict, noise_models)
+    log_delta = BMF.block_matrix(log_delta_values, row_batch_dict, noise_models)
 
     A = BMF.forward(X, Y, mu, log_sigma, theta, log_delta,
                    noise_map)
@@ -234,7 +224,8 @@ function all_equal(mp::BMF.ModelParams, x::Number)
 
     for pn in propertynames(mp)
         arr = getvalues(getproperty(mp, pn))
-        if sum(isapprox.(arr, x)) != prod(size(arr)) 
+        # Check whether any entry is *not* approximately x
+        if !reduce((a,b)-> a & all(b), map(a->isapprox.(a,x), arr) ; init=true) 
             return false
         end
     end
@@ -254,8 +245,12 @@ function model_params_tests()
     mu = zeros(N)
     log_sigma = zeros(N)
 
-    theta = BMF.BlockMatrix(zeros(2,2),[1:5,6:10],[1:10,11:20])
-    log_delta = BMF.BlockMatrix(zeros(2,2),[1:5,6:10],[1:10,11:20])
+    theta = BMF.BlockMatrix(Vector[zeros(2) for _=1:2],
+                            [[1:5,6:10],[1:5,6:10]],
+                            [1:10,11:20])
+    log_delta = BMF.BlockMatrix(Vector[zeros(2) for _=1:2],
+                                [[1:5,6:10],[1:5,6:10]],
+                                [1:10,11:20])
 
     a = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
 
@@ -292,10 +287,12 @@ function model_core_tests()
     col_batches = repeat(1:2, inner=n_logistic)
     col_batch_ranges = BMF.ids_to_ranges(col_batches)
 
-    log_delta = BMF.BlockMatrix(zeros(BMF.BMFFloat, n_batches, 2),
-                                row_batch_ranges, col_batch_ranges)
-    theta = BMF.BlockMatrix(zeros(BMF.BMFFloat, n_batches, 2),
-                            row_batch_ranges, col_batch_ranges)
+    log_delta = BMF.BlockMatrix([zeros(BMF.BMFFloat, n_batches) for _=1:2],
+                                [row_batch_ranges, row_batch_ranges], 
+                                col_batch_ranges)
+    theta = BMF.BlockMatrix([zeros(BMF.BMFFloat, n_batches) for _=1:2],
+                            [row_batch_ranges, row_batch_ranges], 
+                            col_batch_ranges)
 
     feature_link_map = BMF.ColBlockMap(Function[BMF.logistic_link, BMF.quad_link],
                                        col_batch_ranges)
@@ -331,15 +328,15 @@ function model_core_tests()
         test_grad_Y = CUDA.zeros(K, N)
         @test grad_Y == test_grad_Y
 
-        test_grad_theta = zeros(n_batches, 2)
-        test_grad_theta[:,1] .= 0.25 * n_logistic * div(M,n_batches)
-        test_grad_theta[:,2] .= n_logistic * div(M,n_batches)
+        test_grad_theta = [zeros(n_batches) for _=1:2]
+        test_grad_theta[1] .= 0.25 * n_logistic * div(M,n_batches)
+        test_grad_theta[2] .= n_logistic * div(M,n_batches)
         @test grad_theta.values == test_grad_theta
        
         test_grad_sigma = CUDA.zeros(N)
         @test grad_log_sigma == test_grad_sigma
 
-        test_grad_delta = zeros(n_batches,2)
+        test_grad_delta = [zeros(n_batches) for _=1:2]
         @test grad_log_delta.values == test_grad_delta
 
     end
@@ -379,9 +376,9 @@ function model_core_tests()
         test_grad_mu = CUDA.zeros(N)
         @test grad_mu == test_grad_mu 
         @test grad_log_sigma == CUDA.zeros(N)
-        test_grad_theta = zeros(n_batches,2)
+        test_grad_theta = [zeros(n_batches) for _=1:2]
         @test grad_theta.values == test_grad_theta
-        @test grad_log_delta.values == zeros(n_batches, 2)
+        @test grad_log_delta.values == [zeros(n_batches) for _=1:2]
 
     end
 
@@ -423,10 +420,12 @@ function adagrad_tests()
     mu = zeros(10)
     log_sigma = zeros(10)
 
-    theta = BMF.BlockMatrix(zeros(4,2),[1:5,6:10,11:15,16:20],
-                                       [1:10,11:20])
-    log_delta = BMF.BlockMatrix(zeros(4,2),[1:5,6:10,11:15,16:20],
-                                           [1:10,11:20])
+    theta = BMF.BlockMatrix([zeros(4) for _=1:2],
+                            [[1:5,6:10,11:15,16:20] for _=1:2],
+                            [1:10,11:20])
+    log_delta = BMF.BlockMatrix([zeros(4) for _=1:2],
+                                [[1:5,6:10,11:15,16:20] for _=1:2],
+                                [1:10,11:20])
 
     params = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
 
@@ -450,9 +449,6 @@ end
 
 function fit_tests()
 
-    #M = 1000
-    #N = 2000
-    #K = 100
     M = 20
     N = 10
     K = 5
@@ -460,13 +456,14 @@ function fit_tests()
 
     X_reg, Y_reg, mu_reg, sigma_reg = generate_regularizers(M, N, K)
     
-    sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
-
     n_logistic = div(N,2)
     feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
     
+    sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
+    sample_batch_dict = Dict([k => sample_batch_ids for k in ("logistic","normal")])
+
     my_model = BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
-                                sample_batch_ids, feature_loss_names,
+                                sample_batch_dict, feature_loss_names,
                                 feature_loss_names)
 
     test_X, test_Y, 
@@ -517,10 +514,11 @@ function io_tests()
     n_batches = 4
     X_reg, Y_reg, mu_reg, sigma_reg = generate_regularizers(M, N, K)
     sample_batch_ids = repeat(1:n_batches, inner=div(M,n_batches))
+    sample_batch_dict = Dict([k => sample_batch_ids for k in ("logistic","normal")])
     n_logistic = div(N,2)
     feature_loss_names = [repeat(["logistic"],n_logistic); repeat(["normal"],N-n_logistic)] 
     my_model = BatchMatFacModel(X_reg, Y_reg, mu_reg, sigma_reg,
-                                sample_batch_ids, feature_loss_names,
+                                sample_batch_dict, feature_loss_names,
                                 feature_loss_names)
 
 

@@ -34,10 +34,10 @@ end
 
 # A vector of sparse matrices
 function Base.write(hdf_file::Union{HDF5.File, HDF5.Group}, path::String, 
-                vec::AbstractVector{<:Union{SparseMatrixCSC,CuSparseMatrixCSC}})
+                    vec::AbstractVector{<:Union{SparseMatrixCSC,CuSparseMatrixCSC,Vector}})
 
-    for (i, mat) in enumerate(vec)
-        write(hdf_file, string(path, "/", i), mat)
+    for (i, obj) in enumerate(vec)
+        write(hdf_file, string(path, "/", i), obj)
     end
 end
 
@@ -89,7 +89,7 @@ end
 
 
 # Recursive case: Vector of sparse matrices
-function readtype(hdf_file, path::String, ::Type{Vector{T}}) where T <: Union{SparseMatrixCSC,CuSparseMatrixCSC}
+function readtype(hdf_file, path::String, ::Type{Vector{T}}) where T <: Union{SparseMatrixCSC,CuSparseMatrixCSC,Vector}
     
     result = T[]
     for idx in sort(keys(hdf_file[path]))

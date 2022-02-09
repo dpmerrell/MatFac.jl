@@ -17,10 +17,10 @@ mutable struct BatchMatFacModel
         mu_reg::BMFRegMat
         log_sigma_reg::BMFRegMat
 
-        theta::Matrix{<:Number}
-        log_delta::Matrix{<:Number}
+        theta::Vector{Vector{<:Number}}
+        log_delta::Vector{Vector{<:Number}}
 
-        sample_group_ids::Vector{<:Union{Number,String}}
+        sample_group_ids::Vector{Vector{<:Union{Number,String}}}
         feature_group_ids::Vector{<:Union{Number,String}}
 
         feature_noise_models::Vector{String}
@@ -34,7 +34,7 @@ BMFModel = BatchMatFacModel
 
 # Define a convenience constructor
 function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
-                          sample_block_ids, feature_block_ids,
+                          sample_block_dict, feature_block_ids,
                           feature_loss_names)
 
     M = size(X_reg[1], 1)
@@ -53,15 +53,19 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
     mu = my_randn(BMFFloat, N) ./ BMFFloat(100.0)
     log_sigma = my_zeros(BMFFloat, N)
 
-    n_sample_blocks = length(unique(sample_block_ids))
-    n_feature_blocks = length(unique(feature_block_ids))
-
-    theta = randn(BMFFloat, n_sample_blocks, n_feature_blocks) ./ BMFFloat(100.0)
-    log_delta = zeros(BMFFloat, n_sample_blocks, n_feature_blocks)
+    # Construct the batch parameter values
+    unq_feature_blocks = unique(feature_block_ids)
+    n_feature_blocks = length(unq_feature_blocks)
+    n_sample_blocks_vec = [length(unique(sample_block_dict[k])) for k in unq_feature_blocks]
+    theta_values = [randn(BMFFloat, nblocks) ./ BMFFloat(100.0) for nblocks in n_sample_blocks_vec ]
+    log_delta_values = [zeros(BMFFloat, nblocks) for nblocks in n_sample_blocks_vec ]
+   
+    # Construct the vector of sample batch labels
+    sample_block_ids = [copy(sample_block_dict[k]) for k in unq_feature_blocks]
 
     return BatchMatFacModel(X, Y, X_reg, Y_reg, 
                             mu, log_sigma, mu_reg, log_sigma_reg,
-                            theta, log_delta, 
+                            theta_values, log_delta_values, 
                             sample_block_ids, feature_block_ids,
                             feature_loss_names)
 
