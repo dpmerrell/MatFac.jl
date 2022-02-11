@@ -20,11 +20,11 @@ function ModelParams(model::BMFModel)
     return ModelParams(model.X, model.Y,
                        model.mu, model.log_sigma,
                        batch_matrix(model.theta_values, 
-                                    model.row_batch_dicts, 
-                                    model.col_batches),
+                                    model.sample_batch_ids, 
+                                    model.feature_batch_ids),
                        batch_matrix(model.log_delta_values, 
-                                    model.row_batch_dicts, 
-                                    model.col_batches)
+                                    model.sample_batch_ids, 
+                                    model.feature_batch_ids)
                       )
 end
 

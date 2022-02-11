@@ -193,8 +193,10 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     mu = BMF.BMFVec(CUDA.randn(N) .* 0.01)
 
     n_batches = length(unique(row_batches))
-    theta_values = [randn(n_batches) .* 0.1 for _=1:2]
-    log_delta_values = [randn(n_batches) .* 0.1 for _=1:2]
+    #theta_values = [randn(n_batches) .* 0.1 for _=1:2]
+    #log_delta_values = [randn(n_batches) .* 0.1 for _=1:2]
+    theta_values = [Dict(i => randn()*0.1 for i=1:n_batches) for _=1:2]
+    log_delta_values = [Dict(i => randn()*0.1 for i=1:n_batches) for _=1:2]
 
     noise_models = [repeat(["logistic"], n_logistic);repeat(["normal"], N-n_logistic)]
     if n_logistic > 0
@@ -222,17 +224,17 @@ end
 
 function generate_regularizers(M, N, K)
     
-    X_reg = fill(BMF.BMFRegMat(SparseMatrixCSC(I(M))), K)
-    Y_reg = fill(BMF.BMFRegMat(SparseMatrixCSC(I(N))), K)
+    X_reg = fill(BMF.CuSparseMatrixCSC{Float32}(SparseMatrixCSC(I(M))), K)
+    Y_reg = fill(BMF.CuSparseMatrixCSC{Float32}(SparseMatrixCSC(I(N))), K)
     
-    mu_reg = BMF.BMFRegMat(SparseMatrixCSC(I(N)))
-    sigma_reg = BMF.BMFRegMat(SparseMatrixCSC(I(N)))
+    mu_reg = BMF.CuSparseMatrixCSC{Float32}(SparseMatrixCSC(I(N)))
+    sigma_reg = BMF.CuSparseMatrixCSC{Float32}(SparseMatrixCSC(I(N)))
     
     return X_reg, Y_reg, mu_reg, sigma_reg
 end
 
 
-getvalues(a::BMF.BatchMatrix) = a.values
+getvalues(a::BMF.BatchMatrix) = [collect(values(d)) for d in a.values]
 getvalues(a::AbstractArray) = a
 
 
@@ -322,7 +324,6 @@ function model_core_tests()
         test_A = CUDA.zeros(M,N)
         test_A[:,1:n_logistic] .= 0.5
 
-
         @test A == test_A
 
         # Gradient
@@ -341,17 +342,20 @@ function model_core_tests()
         @test grad_X == test_grad_X
 
         test_grad_Y = CUDA.zeros(K, N)
+        #test_grad_Y = [Dict(k=>test_grad_Y[k,j] for k=1:K) for j=1:N]
         @test grad_Y == test_grad_Y
 
         test_grad_theta = [zeros(n_batches) for _=1:2]
         test_grad_theta[1] .= 0.25 * n_logistic * div(M,n_batches)
         test_grad_theta[2] .= n_logistic * div(M,n_batches)
+        test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_theta.values == test_grad_theta
        
         test_grad_sigma = CUDA.zeros(N)
         @test grad_log_sigma == test_grad_sigma
 
         test_grad_delta = [zeros(n_batches) for _=1:2]
+        test_grad_delta = [Dict(k=>test_grad_delta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_log_delta.values == test_grad_delta
 
     end
@@ -392,8 +396,10 @@ function model_core_tests()
         @test grad_mu == test_grad_mu 
         @test grad_log_sigma == CUDA.zeros(N)
         test_grad_theta = [zeros(n_batches) for _=1:2]
+        test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_theta.values == test_grad_theta
-        @test grad_log_delta.values == [zeros(n_batches) for _=1:2]
+        test_grad_delta = [Dict(k=> 0. for k=1:n_batches) for j=1:2]
+        @test grad_log_delta.values == test_grad_delta 
 
     end
 
@@ -429,18 +435,31 @@ end
 
 function adagrad_tests()
 
-    X = zeros(5,10)
-    Y = zeros(5,20)
+    M = 10
+    N = 20
+    K = 5
+    n_batches = 2
+    n_logistic = div(N,2)
+    
+    X = zeros(K,M)
+    Y = zeros(K,N)
 
-    mu = zeros(10)
-    log_sigma = zeros(10)
+    mu = zeros(N)
+    log_sigma = zeros(N)
 
-    theta = BMF.BatchMatrix([zeros(4) for _=1:2],
-                            [[1:5,6:10,11:15,16:20] for _=1:2],
-                            [1:10,11:20])
-    log_delta = BMF.BatchMatrix([zeros(4) for _=1:2],
-                                [[1:5,6:10,11:15,16:20] for _=1:2],
-                                [1:10,11:20])
+    bm_values = [Dict(i => 0. for i=1:n_batches) for _=1:2]
+    row_batches = repeat(1:n_batches, inner=div(M,n_batches))
+    bm_row_batches = [row_batches, row_batches]
+    bm_col_batches = repeat(1:2, inner=n_logistic)
+    
+    log_delta = BMF.batch_matrix(bm_values, bm_row_batches, bm_col_batches)
+    theta = BMF.batch_matrix(bm_values, bm_row_batches, bm_col_batches)
+    #theta = BMF.BatchMatrix([zeros(4) for _=1:2],
+    #                        [[1:5,6:10,11:15,16:20] for _=1:2],
+    #                        [1:10,11:20])
+    #log_delta = BMF.BatchMatrix([zeros(4) for _=1:2],
+    #                            [[1:5,6:10,11:15,16:20] for _=1:2],
+    #                            [1:10,11:20])
 
     params = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
 
@@ -549,7 +568,7 @@ function io_tests()
             sp = BMF.readtype(file, "/spmat", SparseMatrixCSC)
             @test sp == spmat
 
-            spv = BMF.readtype(file, "/spmat_vec", Vector{SparseMatrixCSC})
+            spv = BMF.readtype(file, "/spmat_vec", Vector{<:SparseMatrixCSC})
             @test spv == spmat_vec
 
             mdl = BMF.readtype(file, "/my_model", BMF.BMFModel)
@@ -564,14 +583,14 @@ end
 
 function main()
    
-    #util_tests()
-    #batch_matrix_tests()
-    #col_block_map_tests()
+    util_tests()
+    batch_matrix_tests()
+    col_block_map_tests()
     model_params_tests()
     model_core_tests()
-    #adagrad_tests()
-    #fit_tests()
-    #io_tests()
+    adagrad_tests()
+    fit_tests()
+    io_tests()
 
 end
 

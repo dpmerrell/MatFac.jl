@@ -4,6 +4,7 @@ using ChainRules, Zygote, CUDA, HDF5, LinearAlgebra, SparseArrays
 
 include("typedefs.jl")
 include("util.jl")
+include("arithmetic.jl")
 include("batch_matrix.jl")
 include("col_block_map.jl")
 include("batch_iter.jl")

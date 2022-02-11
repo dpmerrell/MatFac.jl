@@ -31,10 +31,20 @@ function Base.write(hdf_file::Union{HDF5.File,HDF5.Group}, path::String,
     write(hdf_file, path, Array(obj))
 end
 
+# A Dictionary
+function Base.write(hdf_file::Union{HDF5.File,HDF5.Group}, path::String, 
+                    obj::Dict{T,U}) where T<:KeyType where U<:Number
+    k_vec = collect(keys(obj))
+    v_vec = U[obj[k] for k in k_vec]
+    write(hdf_file, string(path,"/keys"), k_vec)
+    write(hdf_file, string(path,"/values"), v_vec)
+end
 
-# A vector of sparse matrices
+BMFObjects = Union{SparseMatrixCSC,CuSparseMatrixCSC,Vector,Dict}
+
+# A vector of objects 
 function Base.write(hdf_file::Union{HDF5.File, HDF5.Group}, path::String, 
-                    vec::AbstractVector{<:Union{SparseMatrixCSC,CuSparseMatrixCSC,Vector}})
+                    vec::AbstractVector{<:BMFObjects})
 
     for (i, obj) in enumerate(vec)
         write(hdf_file, string(path, "/", i), obj)
@@ -70,6 +80,15 @@ function readtype(hdf_file, path::String, t::Type{T}) where T <: CuArray{<:Union
     return t(read(hdf_file[path]))
 end
 
+
+# Recursive case: Dictionary
+function readtype(hdf_file, path::String, t::Type{T}) where T<:Dict
+    k_vec = read(hdf_file[string(path,"/keys")])
+    v_vec = read(hdf_file[string(path,"/values")])
+    return Dict(zip(k_vec,v_vec))
+end
+
+
 # Recursive case: Sparse matrix
 function readtype(hdf_file, path::String, t::Type{<:SparseMatrixCSC})
 
@@ -84,20 +103,23 @@ end
 
 # Recursive case: CUDA sparse matrix 
 function readtype(hdf_file, path::String, t::Type{<:CuSparseMatrixCSC})
-    return t(readtype(hdf_file, path, SparseMatrixCSC))
+    return BMFRegMat(readtype(hdf_file, path, SparseMatrixCSC))
 end
 
 
-# Recursive case: Vector of sparse matrices
-function readtype(hdf_file, path::String, ::Type{Vector{T}}) where T <: Union{SparseMatrixCSC,CuSparseMatrixCSC,Vector}
+# Recursive case: Vector of objects
+function readtype(hdf_file, path::String, t::Type{Vector{<:T}}) where T <: BMFObjects 
     
-    result = T[]
+    vtype = t.var.ub
+
+    result = vtype[]
     for idx in sort(keys(hdf_file[path]))
-        push!(result, readtype(hdf_file, string(path,"/",idx), T))
+        push!(result, readtype(hdf_file, string(path,"/",idx), vtype))
     end
 
     return result
 end
+
 
 # Recursive case: Model 
 function readtype(hdf_file, path::String, t::Type{BMFModel})

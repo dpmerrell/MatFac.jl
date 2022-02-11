@@ -135,9 +135,9 @@ function Base.map(f::Function, d::Dict{T,U}) where T where U<:Number
     return Dict{T,U}(k => f(v) for (k,v) in d)
 end
 
-function Base.map(f::Function, collection::BatchMatrix)
+function Base.map(f::Function, collection::BatchMatrix{T,U}) where T<:Number where U<:KeyType
         
-    new_values = Vector[map(f, v) for v in collection.values]
+    new_values = Dict{U,T}[map(f, v) for v in collection.values]
     return BatchMatrix(new_values,
                        collection.row_batch_dicts,
                        collection.col_batches)
@@ -165,9 +165,6 @@ function Base.exp(A::BatchMatrix)
     return map(exp, A)
 end
 
-function binop(func::Function, d1::Dict{T,U}, d2::Dict{T,U}) where T where U<:Number
-    return Dict{T,U}(k => func(a, d2[k]) for (k,a) in d1)
-end
 
 function ChainRules.rrule(::typeof(exp), A::BatchMatrix{U,T}) where U<:Number where T<:KeyType
 

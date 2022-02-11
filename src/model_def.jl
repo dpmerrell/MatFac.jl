@@ -10,8 +10,8 @@ mutable struct BatchMatFacModel
         # (and their quadratic regularizers)
         X::BMFMat
         Y::BMFMat
-        X_reg::Vector{BMFRegMat}
-        Y_reg::Vector{BMFRegMat}
+        X_reg::Vector{<:BMFRegMat}
+        Y_reg::Vector{<:BMFRegMat}
 
         ################################
         # Feature parameters 
@@ -23,9 +23,9 @@ mutable struct BatchMatFacModel
 
         ################################
         # Batch parameters
-        theta_values::Vector{Dict{<:KeyType,<:Number}}
-        log_delta_values::Vector{Dict{<:KeyType,<:Number}}
-        sample_batch_ids::Vector{Vector{<:KeyType}}
+        theta_values::Vector{<:Dict}
+        log_delta_values::Vector{<:Dict}
+        sample_batch_ids::Vector{<:Vector{<:KeyType}}
         feature_batch_ids::Vector{<:KeyType}
 
         ################################
