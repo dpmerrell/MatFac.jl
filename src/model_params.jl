@@ -8,8 +8,8 @@ mutable struct ModelParams
     mu::BMFVec
     log_sigma::BMFVec
 
-    theta::BlockMatrix
-    log_delta::BlockMatrix
+    theta::BatchMatrix
+    log_delta::BatchMatrix
 
 end
 
@@ -17,17 +17,14 @@ end
 # Create a YParams object from a Model object
 function ModelParams(model::BMFModel)
 
-    col_ranges = ids_to_ranges(model.feature_group_ids)
-    row_ranges = [ids_to_ranges(v) for v in model.sample_group_ids]
-
     return ModelParams(model.X, model.Y,
                        model.mu, model.log_sigma,
-                       BlockMatrix(model.theta, 
-                                   row_ranges, 
-                                   col_ranges),
-                       BlockMatrix(model.log_delta, 
-                                   row_ranges, 
-                                   col_ranges)
+                       batch_matrix(model.theta_values, 
+                                    model.row_batch_dicts, 
+                                    model.col_batches),
+                       batch_matrix(model.log_delta_values, 
+                                    model.row_batch_dicts, 
+                                    model.col_batches)
                       )
 end
 

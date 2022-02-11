@@ -8,3 +8,4 @@ BMFRange = UnitRange
 
 CuSparseMatrixCSC = CUDA.CUSPARSE.CuSparseMatrixCSC
 
+KeyType = Union{String,Int}

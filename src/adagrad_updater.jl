@@ -28,7 +28,7 @@ end
 
 function load_property_arr(mp::ModelParams, p::Symbol)
     a = getproperty(mp, p)
-    if typeof(a) == BlockMatrix
+    if typeof(a) == BatchMatrix
         return a.values
     end
     return a

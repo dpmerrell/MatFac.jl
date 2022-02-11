@@ -38,6 +38,18 @@ function ids_to_ranges(id_vec)
 end
 
 
+function ids_to_idx_dict(id_vec)
+
+    unq_ids = unique(id_vec)
+    idx_dict = Dict([unq_id => Int[] for unq_id in unq_ids])
+
+    for (i,name) in enumerate(id_vec)
+        push!(idx_dict[name], i)
+    end
+
+    return idx_dict
+end
+
 
 function subset_ranges(ranges::Vector, rng::UnitRange) 
     
@@ -60,4 +72,29 @@ function subset_ranges(ranges::Vector, rng::UnitRange)
 
     return new_ranges, r_min_idx, r_max_idx
 end
+
+
+function subset_idx_dict(idx_dict::Dict{T,Vector{Int}}, rng::UnitRange) where T
+
+    r_min = rng.start
+    r_max = rng.stop
+
+    @assert r_min < r_max
+
+    new_dict = Dict{T,Vector{Int}}()
+    # Loop the index vectors
+    for (k, idx_vec) in idx_dict
+        # If the given range intersects with this 
+        # index vector, then we keep a subset of it
+        if (r_min <= idx_vec[end]) & (r_max >= idx_vec[1])
+            start_idx = searchsorted(idx_vec, r_min).start
+            stop_idx = searchsorted(idx_vec, r_max).stop
+
+            new_dict[k] = idx_vec[start_idx:stop_idx]
+        end
+    end
+
+    return new_dict
+end
+
 

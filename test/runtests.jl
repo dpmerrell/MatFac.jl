@@ -16,35 +16,45 @@ function util_tests()
         @test my_ranges == [1:2,3:4,5:5]
 
         @test BMF.subset_ranges(my_ranges, 2:5) == ([2:2,3:4,5:5], 1, 3)
+
+        my_idx_dict = BMF.ids_to_idx_dict([1,1,1,2,2,1,2,3,3,1,2,3,3])
+        @test my_idx_dict == Dict(1 => [1,2,3,6,10], 
+                                  2 => [4,5,7,11],
+                                  3 => [8,9,12,13])
+
+        d_subset = BMF.subset_idx_dict(my_idx_dict, 5:11)
+        @test d_subset == Dict(1 => [6,10],
+                               2 => [5,7,11],
+                               3 => [8,9])
     end
 
 end
 
 
-function block_matrix_tests()
+function batch_matrix_tests()
 
-    @testset "BlockMatrix" begin
+    @testset "BatchMatrix" begin
         
-        row_block_dict = Dict(1 => ["cat","cat","dog","dog","dog","fish"],
-                              2 => ["cat","cat","dog","dog","dog","fish"]
-                             )
-        col_blocks = [1,1,2,2,2,2,2]
-        #r_matrix = [1. 1.; 2. 2.; 3. 4.]
-        r_matrix = [[1., 2., 3.],[1., 2., 4.]]
+        row_batch_ids = [["cat","cat","dog","dog","dog","fish"],
+                         ["cat","cat","dog","dog","dog","fish"]]
+        col_batches = [1,1,2,2,2,2,2]
+        r_matrix = [Dict("cat"=>1., "dog"=>2., "fish"=>3.),
+                    Dict("cat"=>1., "dog"=>2., "fish"=>4.)]
 
         # Construction
-        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
+        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
     
-        @test A == BMF.BlockMatrix(r_matrix, [UnitRange[1:2,3:5,6:6],
-                                              UnitRange[1:2,3:5,6:6]],
-                                             UnitRange[1:2,3:7])
+        @test A == BMF.BatchMatrix(r_matrix, [Dict("cat"=>[1,2],"dog"=>[3,4,5],"fish"=>[6]),
+                                              Dict("cat"=>[1,2],"dog"=>[3,4,5],"fish"=>[6])],
+                                              UnitRange[1:2,3:7])
         @test size(A) == (6,7)
 
         # Getindex
         B = A[3:6, 1:7]
 
-        @test B.row_ranges_vec == [[1:3, 4:4],[1:3,4:4]]
-        @test B.col_ranges == [1:2, 3:7]
+        @test B.row_batch_dicts == [Dict("dog"=>[1,2,3], "fish"=>[4]),
+                                    Dict("dog"=>[1,2,3], "fish"=>[4])]
+        @test B.col_batches == [1:2, 3:7]
 
         # Addition by dense matrix
         C = ones(6,7)
@@ -66,32 +76,38 @@ function block_matrix_tests()
 
         @test D == test_D
 
-        # Additive row update (100% overlapping blocks)
-        B.values = [[1., 1.], [1., 1.]]
+        # Additive row update (100% overlapping batches)
+        #B.values = [[1., 1.], [1., 1.]]
+        map!(x->1, B, B)
+        println("MATRIX A")
+        println(A)
         BMF.row_add!(A, 3:6, B)
-        @test A.values == [[1., 3., 4.], [1., 3., 5.]]
+        @test A.values == [Dict("cat"=>1., "dog"=>3., "fish"=>4.), 
+                           Dict("cat"=>1., "dog"=>3., "fish"=>5.)]
 
         # Additive row update (partially overlapping blocks)
-        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
+        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
         B = A[2:4, 1:7]
-        #B.values = [[2., -2.], [3., -3.]]
-        B.values = [[2., 3.],[-2.,-3.]]
+        B.values = [Dict("cat"=>2., "dog"=>3.),
+                    Dict("cat"=>-2.,"dog"=>-3.)]
         BMF.row_add!(A, 2:4, B)
 
-        @test A.values == [[2., 4., 3.], [0., 0., 4.]]
+        @test A.values == [Dict("cat"=>2., "dog"=>4., "fish"=>3.), 
+                           Dict("cat"=>0., "dog"=>0., "fish"=>4.)]
 
         # Backpropagation for addition
-        A = BMF.block_matrix(r_matrix, row_block_dict, col_blocks)
+        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
         B = A[2:4, 1:7]
         #B.values = [2. -2.; 3. -3.]
-        B.values = [[2., 3.],[-2., -3.]]
+        B.values = [Dict("cat"=>2., "dog"=>3.),
+                    Dict("cat"=>-2.,"dog"=> -3.)]
         BMF.row_add!(A, 2:4, B)
         D_view = view(test_D, 2:4, :)
         (grad_D, grad_B) = gradient((d,b)->sum(d+b), D_view, B)
         
         @test grad_D == ones(3,7)
-        #@test grad_B.values == [2. 5.; 4. 10.] # Just the number of entries for each value 
-        @test grad_B.values == [[2., 4.],[5., 10.]] # Just the number of entries for each value 
+        @test grad_B.values == [Dict("cat"=>2., "dog"=>4.),
+                                Dict("cat"=>5., "dog"=>10.)] # Just the number of entries for each value 
 
         # Backpropagation for multiplication
         C = ones(3,7)
@@ -100,8 +116,8 @@ function block_matrix_tests()
         @test grad_C == [ 2. 2. -2. -2. -2. -2. -2.; 
                           3. 3. -3. -3. -3. -3. -3.; 
                           3. 3. -3. -3. -3. -3. -3.]
-        #@test grad_B.values == [ 2. 5.; 4. 10.] # Just the sum of entries for each value 
-        @test grad_B.values == [[2., 4.],[5., 10.]]
+        @test grad_B.values == [Dict("cat"=>2., "dog"=>4.),
+                                Dict("cat"=>5., "dog"=>10.)]
 
     end
 
@@ -187,9 +203,9 @@ function simulate_data(M, N, K, row_batches, n_logistic)
         noise_map = BMF.ColBlockMap([BMF.quad_link], noise_models)
     end
 
-    row_batch_dict = Dict("logistic" => row_batches, "normal" => row_batches)
-    theta = BMF.block_matrix(theta_values, row_batch_dict, noise_models)
-    log_delta = BMF.block_matrix(log_delta_values, row_batch_dict, noise_models)
+    row_batch_ids = [row_batches, row_batches]
+    theta = BMF.batch_matrix(theta_values, row_batch_ids, noise_models)
+    log_delta = BMF.batch_matrix(log_delta_values, row_batch_ids, noise_models)
 
     A = BMF.forward(X, Y, mu, log_sigma, theta, log_delta,
                    noise_map)
@@ -216,7 +232,7 @@ function generate_regularizers(M, N, K)
 end
 
 
-getvalues(a::BMF.BlockMatrix) = a.values
+getvalues(a::BMF.BatchMatrix) = a.values
 getvalues(a::AbstractArray) = a
 
 
@@ -245,12 +261,12 @@ function model_params_tests()
     mu = zeros(N)
     log_sigma = zeros(N)
 
-    theta = BMF.BlockMatrix(Vector[zeros(2) for _=1:2],
-                            [[1:5,6:10],[1:5,6:10]],
-                            [1:10,11:20])
-    log_delta = BMF.BlockMatrix(Vector[zeros(2) for _=1:2],
-                                [[1:5,6:10],[1:5,6:10]],
-                                [1:10,11:20])
+    theta = BMF.batch_matrix([Dict(1=>0., 2=>0.),Dict(1=>0., 2=>0.)],
+                             [[fill(1,5); fill(2,5)], [fill(1,5); fill(2,5)]],
+                             [fill(1,10); fill(2,10)])
+    log_delta = BMF.batch_matrix([Dict(1=>0., 2=>0.),Dict(1=>0., 2=>0.)],
+                             [[fill(1,5); fill(2,5)], [fill(1,5); fill(2,5)]],
+                             [fill(1,10); fill(2,10)])
 
     a = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
 
@@ -287,12 +303,11 @@ function model_core_tests()
     col_batches = repeat(1:2, inner=n_logistic)
     col_batch_ranges = BMF.ids_to_ranges(col_batches)
 
-    log_delta = BMF.BlockMatrix([zeros(BMF.BMFFloat, n_batches) for _=1:2],
-                                [row_batch_ranges, row_batch_ranges], 
-                                col_batch_ranges)
-    theta = BMF.BlockMatrix([zeros(BMF.BMFFloat, n_batches) for _=1:2],
-                            [row_batch_ranges, row_batch_ranges], 
-                            col_batch_ranges)
+    bm_values = [Dict(i => 0. for i=1:n_batches) for _=1:2]
+    bm_row_batches = [row_batches, row_batches]
+
+    log_delta = BMF.batch_matrix(bm_values, bm_row_batches, col_batches)
+    theta = BMF.batch_matrix(bm_values, bm_row_batches, col_batches)
 
     feature_link_map = BMF.ColBlockMap(Function[BMF.logistic_link, BMF.quad_link],
                                        col_batch_ranges)
@@ -420,10 +435,10 @@ function adagrad_tests()
     mu = zeros(10)
     log_sigma = zeros(10)
 
-    theta = BMF.BlockMatrix([zeros(4) for _=1:2],
+    theta = BMF.BatchMatrix([zeros(4) for _=1:2],
                             [[1:5,6:10,11:15,16:20] for _=1:2],
                             [1:10,11:20])
-    log_delta = BMF.BlockMatrix([zeros(4) for _=1:2],
+    log_delta = BMF.BatchMatrix([zeros(4) for _=1:2],
                                 [[1:5,6:10,11:15,16:20] for _=1:2],
                                 [1:10,11:20])
 
@@ -549,14 +564,14 @@ end
 
 function main()
    
-    util_tests()
-    block_matrix_tests()
-    col_block_map_tests()
+    #util_tests()
+    #batch_matrix_tests()
+    #col_block_map_tests()
     model_params_tests()
     model_core_tests()
-    adagrad_tests()
-    fit_tests()
-    io_tests()
+    #adagrad_tests()
+    #fit_tests()
+    #io_tests()
 
 end
 

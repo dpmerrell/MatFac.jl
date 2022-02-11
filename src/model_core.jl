@@ -2,7 +2,7 @@
 
 
 function forward(X::AbstractMatrix, Y::AbstractMatrix, mu::AbstractVector, log_sigma::AbstractVector, 
-                 theta::BlockMatrix, log_delta::BlockMatrix, feature_link_map::ColBlockMap)
+                 theta::BatchMatrix, log_delta::BatchMatrix, feature_link_map::ColBlockMap)
 
     sigma = exp.(log_sigma)
     delta = exp(log_delta)
@@ -19,7 +19,7 @@ end
 
 function neg_log_likelihood(X::AbstractMatrix, Y::AbstractMatrix, 
                             mu::AbstractVector, log_sigma::AbstractVector, 
-                            theta::BlockMatrix, log_delta::BlockMatrix,
+                            theta::BatchMatrix, log_delta::BatchMatrix,
                             feature_link_map::ColBlockMap, 
                             feature_loss_map::ColBlockAgg, D::AbstractMatrix,
                             missing_data::AbstractMatrix)
@@ -78,7 +78,7 @@ end
 function neg_log_prob(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_reg::Vector{T}, 
                       mu::AbstractVector, mu_reg::BMFRegMat, 
                       log_sigma::AbstractVector, log_sigma_reg::BMFRegMat,
-                      theta::BlockMatrix, log_delta::BlockMatrix, 
+                      theta::BatchMatrix, log_delta::BatchMatrix, 
                       feature_link_map::ColBlockMap, feature_loss_map::ColBlockMap, 
                       D::AbstractMatrix, missing_data::AbstractMatrix) where T <: AbstractMatrix
 
