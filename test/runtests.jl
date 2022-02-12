@@ -126,52 +126,54 @@ function col_block_map_tests()
 
     my_logistic =  x -> 1 ./ (1 .+ exp.(-x))
     my_exp = x -> exp.(x)
+    my_noloss_link = x -> x
 
     my_sqerr = BMF.quad_loss #(x,y,m) -> 0.5.*(x .- y).^2
     my_binerr = BMF.logistic_loss #(x,y,m) -> - y .* log.(x) - (1 .- y) .* log.(1 .- x)
+    my_noloss = BMF.noloss_loss
 
-    col_block_ids = ["cat", "cat", "dog", "dog", "dog"]
+    col_block_ids = ["cat", "cat", "dog", "dog", "dog", "fish", "fish"]
     
-    X = zeros(2,5)
-    Y = ones(2,5)
+    X = CUDA.zeros(2,7)
+    Y = CUDA.ones(2,7)
     Y[:,1:2] .= 0.5
-    
+    Y[:,6:7] .= 0.0 
 
     @testset "ColBlockMap" begin
     
         # Construction
-        my_cbm = BMF.ColBlockMap([my_logistic, my_exp], col_block_ids)
-        @test my_cbm.col_blocks == [1:2, 3:5]
+        my_cbm = BMF.ColBlockMap([my_logistic, my_exp, my_noloss_link], col_block_ids)
+        @test my_cbm.col_blocks == [1:2, 3:5, 6:7]
 
         A = my_cbm(X)
 
         @test A == Y
         
         grad = gradient(x->sum(my_cbm(x)), X)[1]
-        correct_grad = ones(2,5)
+        correct_grad = CUDA.ones(2,7)
         correct_grad[:,1:2] .= 0.25
 
         @test grad == correct_grad
 
-
     end
 
-    D = ones(2,5)
-    test_losses = zeros(2,5)
+    D = CUDA.ones(2,7)
+    test_losses = CUDA.zeros(2,7)
     test_losses[:,1:2] .= -log(0.5)
-    missing_data = zeros(Bool, size(D)...)
+    test_losses[:,6:7] .= 0.0
+    missing_data = CUDA.zeros(Bool, size(D)...)
 
     @testset "ColBlockAgg" begin
 
         # Construction
-        my_cba = BMF.ColBlockAgg([my_binerr, my_sqerr], col_block_ids)
-        @test my_cba.col_blocks == [1:2, 3:5]
+        my_cba = BMF.ColBlockAgg([my_binerr, my_sqerr, my_noloss], col_block_ids)
+        @test my_cba.col_blocks == [1:2, 3:5, 6:7]
 
         losses = my_cba(Y, D, missing_data)
         @test losses == test_losses 
 
         grad = gradient(y-> sum(my_cba(y,D,missing_data)), Y)[1]
-        correct_grad = zeros(2,5)
+        correct_grad = CUDA.zeros(2,7)
         correct_grad[:,1:2] .= -2.0
         
         @test grad == correct_grad
@@ -581,14 +583,14 @@ end
 
 function main()
    
-    util_tests()
-    batch_matrix_tests()
+    #util_tests()
+    #batch_matrix_tests()
     col_block_map_tests()
-    model_params_tests()
-    model_core_tests()
-    adagrad_tests()
-    fit_tests()
-    io_tests()
+    #model_params_tests()
+    #model_core_tests()
+    #adagrad_tests()
+    #fit_tests()
+    #io_tests()
 
 end
 

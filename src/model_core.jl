@@ -58,9 +58,10 @@ function ChainRules.rrule(::typeof(matrix_nlprior), X::AbstractMatrix, X_reg::Ve
 end
 
 
-function neg_log_prior(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_reg::Vector{T}, 
+function neg_log_prior(X::AbstractMatrix, X_reg::Vector{<:AbstractMatrix}, 
+                       Y::AbstractMatrix, Y_reg::Vector{<:AbstractMatrix}, 
                        mu::AbstractVector, mu_reg::AbstractMatrix, 
-                       log_sigma::AbstractVector, log_sigma_reg::AbstractMatrix) where T <: AbstractMatrix
+                       log_sigma::AbstractVector, log_sigma_reg::AbstractMatrix)
     
     loss = BMFFloat(0.0f0)
 

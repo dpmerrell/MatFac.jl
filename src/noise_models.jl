@@ -41,7 +41,7 @@ end
 LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
                          "logistic"=>logistic_link,
                          "poisson"=>poisson_link,
-                         "noloss"=>noloss_link
+                         "noloss"=>noloss_link,
                         )
 
 
@@ -111,10 +111,19 @@ end
 
 function noloss_loss(A::AbstractArray, D::AbstractArray,
                      missing_data::AbstractArray)
-
     return zero(A)
 end
 
+
+function ChainRules.rrule(::typeof(noloss_loss), A, D, missing_data)
+    
+    function noloss_loss_pullback(loss_bar)
+        return ChainRules.NoTangent(), zero(loss_bar), ChainRules.NoTangent(),
+                                                       ChainRules.NoTangent()
+    end
+
+    return zero(A), noloss_loss_pullback 
+end
 
 LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
                          "logistic"=>logistic_loss,
