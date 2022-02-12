@@ -79,8 +79,6 @@ function batch_matrix_tests()
         # Additive row update (100% overlapping batches)
         #B.values = [[1., 1.], [1., 1.]]
         map!(x->1, B, B)
-        println("MATRIX A")
-        println(A)
         BMF.row_add!(A, 3:6, B)
         @test A.values == [Dict("cat"=>1., "dog"=>3., "fish"=>4.), 
                            Dict("cat"=>1., "dog"=>3., "fish"=>5.)]

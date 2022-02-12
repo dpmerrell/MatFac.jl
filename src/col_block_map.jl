@@ -109,8 +109,8 @@ function ChainRules.rrule(cba::ColBlockAgg, Z, A, missing_data)
 
     function ColBlockAgg_pullback(result_bar)
         Z_bar = similar(Z)
-        A_bar = ChainRules.ZeroTangent()
-        missing_data_bar = ChainRules.ZeroTangent()
+        A_bar = ChainRulesCore.ZeroTangent()
+        missing_data_bar = ChainRulesCore.ZeroTangent()
         for (i,(pb, rng)) in enumerate(zip(func_pullbacks, cba.col_blocks))
             Z_bar[:,rng] .= pb(view(result_bar,:,rng))[1]
         end

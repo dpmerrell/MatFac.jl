@@ -14,7 +14,7 @@ mutable struct ModelParams
 end
 
 
-# Create a YParams object from a Model object
+# Create a ModelParams object from a Model object
 function ModelParams(model::BMFModel)
 
     return ModelParams(model.X, model.Y,

@@ -51,7 +51,7 @@ function ChainRules.rrule(::typeof(matrix_nlprior), X::AbstractMatrix, X_reg::Ve
     end
 
     function matrix_nlprior_pullback(loss_bar)
-        return ChainRules.NoTangent(), loss_bar.*X_grad, ChainRules.ZeroTangent()
+        return ChainRules.NoTangent(), loss_bar.*X_grad, ChainRulesCore.ZeroTangent()
     end
 
     return loss, matrix_nlprior_pullback
