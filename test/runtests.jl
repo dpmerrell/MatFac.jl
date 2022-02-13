@@ -162,6 +162,8 @@ function col_block_map_tests()
     test_losses[:,1:2] .= -log(0.5)
     test_losses[:,6:7] .= 0.0
     missing_data = CUDA.zeros(Bool, size(D)...)
+    missing_mask = (0.5 .* missing_data)
+    nonmissing = (!).(missing_data)
 
     @testset "ColBlockAgg" begin
 
@@ -169,10 +171,10 @@ function col_block_map_tests()
         my_cba = BMF.ColBlockAgg([my_binerr, my_sqerr, my_noloss], col_block_ids)
         @test my_cba.col_blocks == [1:2, 3:5, 6:7]
 
-        losses = my_cba(Y, D, missing_data)
+        losses = my_cba(Y, D, missing_mask, nonmissing)
         @test losses == test_losses 
 
-        grad = gradient(y-> sum(my_cba(y,D,missing_data)), Y)[1]
+        grad = gradient(y-> sum(my_cba(y,D,missing_mask, nonmissing)), Y)[1]
         correct_grad = CUDA.zeros(2,7)
         correct_grad[:,1:2] .= -2.0
         
@@ -365,7 +367,9 @@ function model_core_tests()
 
     D = CUDA.zeros(M,N)
     #D[:,1:n_logistic] .= 0.5
-    missing_data = zeros(Bool, size(D)...)
+    missing_data = CUDA.zeros(Bool, size(D)...)
+    missing_mask = (0.5 .* missing_data)
+    nonmissing = (!).(missing_data)
 
     @testset "Likelihood" begin
 
@@ -373,7 +377,9 @@ function model_core_tests()
         loss = BMF.neg_log_likelihood(X, Y, mu, log_sigma, 
                                       theta, log_delta,
                                       feature_link_map, 
-                                      feature_loss_map, D, missing_data)
+                                      feature_loss_map, D, 
+                                      missing_mask,
+                                      nonmissing)
         @test isapprox(loss, n_logistic * M * log(2))
 
         # Gradient
@@ -384,7 +390,8 @@ function model_core_tests()
                                                                     theta, log_delta,
                                                                     feature_link_map, 
                                                                     feature_loss_map, new_D,
-                                                                    missing_data)
+                                                                    missing_mask,
+                                                                    nonmissing)
         grad_X, grad_Y, grad_mu, grad_log_sigma,
         grad_theta, grad_log_delta = gradient(curried_loss, X, Y, mu, log_sigma,
                                                             theta, log_delta)

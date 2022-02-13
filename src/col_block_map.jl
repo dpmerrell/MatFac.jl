@@ -76,11 +76,14 @@ function ColBlockAgg(funcs, col_block_ids::AbstractVector{String})
     return ColBlockAgg(funcs, col_blocks)
 end
 
-function (cba::ColBlockAgg)(Z::AbstractMatrix, A::AbstractMatrix, missing_data::AbstractMatrix)
+function (cba::ColBlockAgg)(Z::AbstractMatrix, A::AbstractMatrix, 
+                            missing_mask::AbstractMatrix,
+                            nonmissing::AbstractMatrix)
 
     result = zero(Z) 
     for (i, (fn, rng)) in enumerate(zip(cba.funcs, cba.col_blocks))
-        result[:, rng] .= fn(view(Z,:,rng), view(A,:,rng), view(missing_data,:,rng))
+        result[:, rng] .= fn(view(Z,:,rng), view(A,:,rng), view(missing_mask,:,rng), 
+                             view(nonmissing,:,rng))
     end
     return result
 end
@@ -97,12 +100,14 @@ function getindex(cba::ColBlockAgg, rng::UnitRange)
 end
 
 
-function ChainRules.rrule(cba::ColBlockAgg, Z, A, missing_data)
+function ChainRules.rrule(cba::ColBlockAgg, Z, A, missing_mask, nonmissing)
 
     result = zero(Z) 
     func_pullbacks = []
     for (i, (fn, rng)) in enumerate(zip(cba.funcs, cba.col_blocks))
-        (res, new_fn) = Zygote.pullback(fn, view(Z,:,rng), view(A,:,rng), view(missing_data,:,rng))
+        (res, new_fn) = Zygote.pullback(fn, view(Z,:,rng), view(A,:,rng), 
+                                        view(missing_mask,:,rng), 
+                                        view(nonmissing,:,rng))
         result[:,rng] .= res
         push!(func_pullbacks, new_fn)
     end
@@ -110,11 +115,13 @@ function ChainRules.rrule(cba::ColBlockAgg, Z, A, missing_data)
     function ColBlockAgg_pullback(result_bar)
         Z_bar = similar(Z)
         A_bar = ChainRulesCore.ZeroTangent()
-        missing_data_bar = ChainRulesCore.ZeroTangent()
+        missing_mask_bar = ChainRulesCore.ZeroTangent()
+        nonmissing_bar = ChainRulesCore.ZeroTangent()
         for (i,(pb, rng)) in enumerate(zip(func_pullbacks, cba.col_blocks))
             Z_bar[:,rng] .= pb(view(result_bar,:,rng))[1]
         end
-        return ChainRules.NoTangent(), Z_bar, A_bar, missing_data_bar
+        return ChainRules.NoTangent(), Z_bar, A_bar, missing_mask_bar,
+                                                     nonmissing_bar
     end
 
     return result, ColBlockAgg_pullback

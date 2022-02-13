@@ -22,11 +22,11 @@ function neg_log_likelihood(X::AbstractMatrix, Y::AbstractMatrix,
                             theta::BatchMatrix, log_delta::BatchMatrix,
                             feature_link_map::ColBlockMap, 
                             feature_loss_map::ColBlockAgg, D::AbstractMatrix,
-                            missing_data::AbstractMatrix)
+                            missing_mask::AbstractMatrix, nonmissing::AbstractMatrix)
 
     A = forward(X, Y, mu, log_sigma, theta, log_delta, feature_link_map)
 
-    return sum(feature_loss_map(A, D, missing_data))
+    return sum(feature_loss_map(A, D, missing_mask, nonmissing))
 end
 
 
@@ -81,10 +81,12 @@ function neg_log_prob(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_
                       log_sigma::AbstractVector, log_sigma_reg::BMFRegMat,
                       theta::BatchMatrix, log_delta::BatchMatrix, 
                       feature_link_map::ColBlockMap, feature_loss_map::ColBlockMap, 
-                      D::AbstractMatrix, missing_data::AbstractMatrix) where T <: AbstractMatrix
+                      D::AbstractMatrix, missing_mask::AbstractMatrix,
+                      nonmissing::AbstractMatrix) where T <: AbstractMatrix
 
     nlp = neg_log_likelihood(X, Y, mu, log_sigma, theta, log_delta,
-                             feature_link_map, feature_loss_map, D, missing_data)
+                             feature_link_map, feature_loss_map, D,
+                             missing_mask, nonmissing)
     nlp += neg_log_prior(X, X_reg, Y, Y_reg, mu, mu_reg, log_sigma, log_sigma_reg)
 
     return nlp

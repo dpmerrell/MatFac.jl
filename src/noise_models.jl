@@ -50,18 +50,20 @@ LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
 ####################################
 
 function quad_loss(A::AbstractArray, D::AbstractArray, 
-                   missing_data::AbstractArray)
-    D[missing_data] .= A[missing_data]
+                   missing_mask::AbstractArray,
+                   nonmissing::AbstractArray)
     return BMFFloat(0.5).*(A .- D).^2
 end
 
-function ChainRules.rrule(::typeof(quad_loss), A, D, missing_data)
+function ChainRules.rrule(::typeof(quad_loss), A, D, missing_mask,
+                          nonmissing)
    
     diff = A .- D
-    diff[missing_data] .= 0
+    diff .*= nonmissing
 
     function quad_loss_pullback(loss_bar)
         return ChainRules.NoTangent(), loss_bar.*diff, ChainRules.NoTangent(),
+                                                       ChainRules.NoTangent(),
                                                        ChainRules.NoTangent()
     end
 
@@ -70,18 +72,25 @@ end
 
 
 function logistic_loss(A::AbstractArray, D::AbstractArray,
-                       missing_data::AbstractArray)
-    D[missing_data] .= A[missing_data]
-    return -D .* log.(A) .- (1 .- D) .* log.( 1 .- A)
+                       missing_mask::AbstractArray,
+                       nonmissing::AbstractArray)
+    loss = -D .* log.(A) .- (1 .- D) .* log.( 1 .- A)
+    return loss
 end
 
 
-function ChainRules.rrule(::typeof(logistic_loss), A, D, missing_data)
-    loss = logistic_loss(A,D,missing_data)
+function ChainRules.rrule(::typeof(logistic_loss), A, D, missing_mask,
+                          nonmissing)
+    
+    A .*= nonmissing
+    A .+= missing_mask
+    
+    loss = logistic_loss(A,D,missing_mask,nonmissing)
 
     function logistic_loss_pullback(loss_bar)
         A_bar = loss_bar .* (-D./A .+ (1 .- D)./(1 .- A))
         return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent(),
+                                              ChainRules.NoTangent(),
                                               ChainRules.NoTangent()
     end
     return loss, logistic_loss_pullback 
@@ -89,19 +98,24 @@ end
 
 
 function poisson_loss(A::AbstractArray, D::AbstractArray, 
-                      missing_data::AbstractArray)
-        D[missing_data] .= A[missing_data]
+                      missing_mask::AbstractArray,
+                      nonmissing::AbstractArray)
     return A .- D.*log.(A)
 end
 
 
-function ChainRules.rrule(::typeof(poisson_loss), A, D, missing_data)
+function ChainRules.rrule(::typeof(poisson_loss), A, D, missing_mask,
+                          nonmissing)
     
-    loss = poisson_loss(A, D, missing_data)
+    A .*= nonmissing
+    A .+= missing_mask
+
+    loss = poisson_loss(A, D, missing_mask, nonmissing)
 
     function poisson_loss_pullback(loss_bar)
         A_bar = loss_bar .* (1 .- D ./ A)
         return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent(),
+                                              ChainRules.NoTangent(),
                                               ChainRules.NoTangent()
     end
 
@@ -110,15 +124,18 @@ end
 
 
 function noloss_loss(A::AbstractArray, D::AbstractArray,
-                     missing_data::AbstractArray)
+                     missing_mask::AbstractArray,
+                     nonmissing::AbstractArray)
     return zero(A)
 end
 
 
-function ChainRules.rrule(::typeof(noloss_loss), A, D, missing_data)
+function ChainRules.rrule(::typeof(noloss_loss), A, D, missing_mask,
+                          nonmissing)
     
     function noloss_loss_pullback(loss_bar)
         return ChainRules.NoTangent(), zero(loss_bar), ChainRules.NoTangent(),
+                                                       ChainRules.NoTangent(),
                                                        ChainRules.NoTangent()
     end
 
@@ -130,3 +147,5 @@ LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
                          "poisson"=>poisson_loss,
                          "noloss"=>noloss_loss
                          )
+
+

@@ -3,9 +3,9 @@
 import ScikitLearnBase: fit! 
 
 
-function vprintln(a; verbose=false)
+function vprintln(a...; verbose=false)
     if verbose
-        println(a)
+        println(string(a...))
     end
 end
 
@@ -15,6 +15,15 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
               lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9,
               verbose::Bool=false)
 
+    # Move data to GPU
+    A_gpu = CuArray(A)
+    
+    # Handle missing values.
+    missing_value = BMFFloat(0.5)
+    missing_data = isnan.(A_gpu) 
+    nonmissing = (!).(missing_data)
+    A_gpu .*= nonmissing
+    A_gpu .+= (missing_data .* missing_value)
 
     M = size(A,1)
     N = size(A,2)
@@ -47,7 +56,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
     col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
 
-    missing_data = isnan.(A)
 
     # For each epoch
     for epoch=1:max_epochs
@@ -55,21 +63,22 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Zero out the gradients
         map!(zero, gradients, gradients)
 
-        vprintln(string("EPOCH ", epoch); verbose=verbose)
+        vprintln("EPOCH ", epoch; verbose=verbose)
 
         # Updates for column-wise and block-wise parameters:
         # Y, mu, sigma, theta, delta
         # Iterate through minibatches of rows
         for row_batch in BatchIter(M, row_batch_size)
-
+            vprintln("\t\tRow batch:", row_batch; verbose=verbose)
             # Select the corresponding rows of X, theta, delta
             batch_X = view(params.X, :, row_batch)
             batch_theta = params.theta[row_batch, 1:N]
             batch_log_delta = params.log_delta[row_batch, 1:N]
 
             # Select the corresponding rows of A; move to GPU
-            batch_A = CuArray(view(A, row_batch, :))
-            batch_missing_data = CuArray(view(missing_data, row_batch, :))
+            batch_A = view(A_gpu, row_batch, :)
+            batch_missing_mask = (view(missing_data, row_batch,:) .* 0.5)
+            batch_nonmissing = view(nonmissing,row_batch,:)
 
             # Curry away the non-updated variables
             row_batch_log_lik = (Y, mu, log_sigma, 
@@ -79,7 +88,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                                          feature_link_map, 
                                                                          feature_loss_map,
                                                                          batch_A,
-                                                                         batch_missing_data)
+                                                                         batch_missing_mask,
+                                                                         batch_nonmissing)
 
             # Compute the batch's likelihood loss gradients 
             # w.r.t. Y, mu, sigma, theta, delta
@@ -121,6 +131,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
         for col_batch in BatchIter(N, col_batch_size)
+            vprintln("\t\tCol batch:", col_batch; verbose=verbose)
             
             # Select the corresponding columns of Y, mu, sigma, theta, delta
             batch_Y = view(params.Y, :, col_batch)
@@ -130,8 +141,9 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             batch_log_delta = params.log_delta[1:M, col_batch]
 
             # Select the corresponding columns of A
-            batch_A = CuArray(view(A, :, col_batch))
-            batch_missing_data = CuArray(view(missing_data, :, col_batch))
+            batch_A = view(A_gpu, :, col_batch)
+            batch_missing_mask = (view(missing_data, :, col_batch) .* 0.5)
+            batch_nonmissing = view(nonmissing, :, col_batch)
            
             batch_link_map = feature_link_map[col_batch]
             batch_loss_map = feature_loss_map[col_batch]
@@ -144,7 +156,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                         batch_link_map, 
                                                         batch_loss_map, 
                                                         batch_A,
-                                                        batch_missing_data)
+                                                        batch_missing_mask,
+                                                        batch_nonmissing)
             
             # Compute the likelihood loss gradients w.r.t. X
             grad_X = gradient(col_batch_log_lik, params.X)[1]
@@ -166,8 +179,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         vprintln("\tUPDATE FINISHED FOR X"; verbose=verbose)
 
     end
-
-    A[missing_data] .= NaN
 
     return #history
 end
