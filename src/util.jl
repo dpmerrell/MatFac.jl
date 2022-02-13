@@ -90,7 +90,9 @@ function subset_idx_dict(idx_dict::Dict{T,Vector{Int}}, rng::UnitRange) where T
             start_idx = searchsorted(idx_vec, r_min).start
             stop_idx = searchsorted(idx_vec, r_max).stop
 
-            new_dict[k] = idx_vec[start_idx:stop_idx]
+            if start_idx <= stop_idx
+                new_dict[k] = idx_vec[start_idx:stop_idx]
+            end
         end
     end
 

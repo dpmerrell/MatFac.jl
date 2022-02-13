@@ -26,6 +26,9 @@ function util_tests()
         @test d_subset == Dict(1 => [6,10],
                                2 => [5,7,11],
                                3 => [8,9])
+        d_subset = BMF.subset_idx_dict(my_idx_dict, 1:7)
+        @test d_subset == Dict(1 => [1,2,3,6],
+                               2 => [4,5,7])
     end
 
 end
@@ -590,7 +593,7 @@ end
 
 function main()
    
-    #util_tests()
+    util_tests()
     #batch_matrix_tests()
     #col_block_map_tests()
     #model_params_tests()

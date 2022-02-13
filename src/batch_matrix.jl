@@ -182,9 +182,10 @@ function Base.:(+)(A::AbstractMatrix, B::BatchMatrix)
     #@assert size(A) == size(B)
 
     result = zero(A)
-    for (j, col_range) in enumerate(B.col_batches)
+    Threads.@threads for j=1:length(B.col_batches)
+        @inbounds col_range = B.col_batches[j]
         for (k, row_batch_idx) in B.row_batch_dicts[j]
-            result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .+ B.values[j][k]
+            @inbounds result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .+ B.values[j][k]
         end
     end
     return result
@@ -198,9 +199,11 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BatchMatrix)
     function bm_add_pullback(Z_bar)
         A_bar = Z_bar
         B_bar = zero(B)
-        for (j,col_range) in enumerate(B.col_batches)
+
+        Threads.@threads for j=1:length(B.col_batches)
+            @inbounds col_range = B.col_batches[j]
             for (k,row_idx) in B.row_batch_dicts[j]
-                B_bar.values[j][k] = sum(Z_bar[row_idx,col_range])
+                @inbounds B_bar.values[j][k] = sum(Z_bar[row_idx,col_range])
             end
         end
 
@@ -304,9 +307,10 @@ end
 function Base.:(*)(A::AbstractMatrix, B::BatchMatrix)
 
     result = zero(A)
-    for (j, col_range) in enumerate(B.col_batches)
+    Threads.@threads for j=1:length(B.col_batches)
+        @inbounds col_range = B.col_batches[j]
         for (k, row_batch_idx) in B.row_batch_dicts[j] 
-            result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .* B.values[j][k]
+            @inbounds result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .* B.values[j][k]
         end
     end
     return result
@@ -320,9 +324,15 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BatchMatrix)
     function bm_mult_pullback(Z_bar)
         A_bar = zero(A)
         B_bar = zero(B)
-        for (j,col_range) in enumerate(B.col_batches)
+        Threads.@threads for j=1:length(B.col_batches)
+            @inbounds col_range = B.col_batches[j]
             for (k, row_batch_idx) in B.row_batch_dicts[j]
-                A_bar[row_batch_idx,col_range] .= (Z_bar[row_batch_idx,col_range] .* B.values[j][k])
+                @inbounds A_bar[row_batch_idx,col_range] .= (Z_bar[row_batch_idx,col_range] .* B.values[j][k])
+            end
+        end
+        for j=1:length(B.col_batches)
+            col_range = B.col_batches[j]
+            for (k, row_batch_idx) in B.row_batch_dicts[j]
                 B_bar.values[j][k] = sum(Z_bar[row_batch_idx,col_range] .* A[row_batch_idx,col_range])
             end
         end

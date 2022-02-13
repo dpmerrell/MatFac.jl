@@ -20,10 +20,11 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     
     # Handle missing values.
     missing_value = BMFFloat(0.5)
-    missing_data = isnan.(A_gpu) 
+    missing_data = isnan.(A_gpu)
+    missing_mask = missing_data .* missing_value
     nonmissing = (!).(missing_data)
     A_gpu .*= nonmissing
-    A_gpu .+= (missing_data .* missing_value)
+    A_gpu .+= missing_mask 
 
     M = size(A,1)
     N = size(A,2)
@@ -77,7 +78,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
             # Select the corresponding rows of A; move to GPU
             batch_A = view(A_gpu, row_batch, :)
-            batch_missing_mask = (view(missing_data, row_batch,:) .* 0.5)
+            batch_missing_mask = view(missing_mask, row_batch,:) 
             batch_nonmissing = view(nonmissing,row_batch,:)
 
             # Curry away the non-updated variables
@@ -142,7 +143,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
             # Select the corresponding columns of A
             batch_A = view(A_gpu, :, col_batch)
-            batch_missing_mask = (view(missing_data, :, col_batch) .* 0.5)
+            batch_missing_mask = view(missing_mask, :, col_batch) 
             batch_nonmissing = view(nonmissing, :, col_batch)
            
             batch_link_map = feature_link_map[col_batch]
