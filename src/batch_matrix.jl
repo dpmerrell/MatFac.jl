@@ -74,32 +74,22 @@ function getindex(A::BatchMatrix{T,U}, row_range::UnitRange, col_range::UnitRang
     c_min = col_range.start
     new_col_batches, c_min_idx, c_max_idx = subset_ranges(A.col_batches, col_range)
     new_col_batches = UnitRange[(rng.start - c_min + 1):(rng.stop - c_min + 1) for rng in new_col_batches]
-    new_values = A.values[c_min_idx:c_max_idx]
-
+    
+    new_values = Dict{U,T}[] 
     new_row_batch_dicts = Dict{U,Vector{Int}}[]
-    for (i, old_row_batches) in enumerate(A.row_batch_dicts)
+
+    for cbatch=c_min_idx:c_max_idx
+        old_row_batches = A.row_batch_dicts[cbatch]
         r_min = row_range.start - 1
+        
         new_row_batch_dict = subset_idx_dict(old_row_batches, row_range)
         new_row_batch_dict = Dict(k => (v .- r_min) for (k,v) in new_row_batch_dict)
-
-        new_values[i] = Dict{U,T}(k => new_values[i][k] for k in keys(new_row_batch_dict))
         push!(new_row_batch_dicts, new_row_batch_dict)
+        push!(new_values, Dict{U,T}(k => A.values[cbatch][k] for k in keys(new_row_batch_dict)))
     end
 
     return BatchMatrix(new_values, new_row_batch_dicts, new_col_batches)
 end
-
-
-########################################
-## `getindex` operation 
-#function getindex(A::BatchMatrix, row_range::UnitRange, col_range::UnitRange)
-#
-#    A_view = view(A, row_range, col_range)
-#    value_copy = Vector[v[:] for v in A.values]
-#
-#    return BatchMatrix(value_copy, A.row_ranges_vec, A.col_ranges)
-#
-#end
 
 
 #######################################

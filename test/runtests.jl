@@ -504,7 +504,7 @@ function fit_tests()
     test_log_sigma, test_mu, 
     test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
 
-    fit!(my_model, A; max_epochs=200, capacity=M*N, lr=0.01)
+    fit!(my_model, A; max_epochs=200, capacity=div(M*N,2), lr=0.01, verbose=true)
 
     # Just put an empty test here to show we run to completion
     @testset "Fit" begin
@@ -585,11 +585,11 @@ function main()
    
     #util_tests()
     #batch_matrix_tests()
-    col_block_map_tests()
+    #col_block_map_tests()
     #model_params_tests()
     #model_core_tests()
     #adagrad_tests()
-    #fit_tests()
+    fit_tests()
     #io_tests()
 
 end
