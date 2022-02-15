@@ -324,15 +324,10 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BatchMatrix)
     function bm_mult_pullback(Z_bar)
         A_bar = zero(A)
         B_bar = zero(B)
-        Threads.@threads for j=1:length(B.col_batches)
+        for j=1:length(B.col_batches)
             @inbounds col_range = B.col_batches[j]
             for (k, row_batch_idx) in B.row_batch_dicts[j]
                 @inbounds A_bar[row_batch_idx,col_range] .= (Z_bar[row_batch_idx,col_range] .* B.values[j][k])
-            end
-        end
-        for j=1:length(B.col_batches)
-            col_range = B.col_batches[j]
-            for (k, row_batch_idx) in B.row_batch_dicts[j]
                 B_bar.values[j][k] = sum(Z_bar[row_batch_idx,col_range] .* A[row_batch_idx,col_range])
             end
         end

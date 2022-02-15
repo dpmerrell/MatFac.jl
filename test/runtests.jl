@@ -594,13 +594,13 @@ end
 function main()
    
     util_tests()
-    #batch_matrix_tests()
-    #col_block_map_tests()
-    #model_params_tests()
-    #model_core_tests()
-    #adagrad_tests()
+    batch_matrix_tests()
+    col_block_map_tests()
+    model_params_tests()
+    model_core_tests()
+    adagrad_tests()
     fit_tests()
-    #io_tests()
+    io_tests()
 
 end
 

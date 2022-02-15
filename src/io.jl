@@ -12,8 +12,8 @@ import Base: write
 # A model or CPU sparse matrix
 function Base.write(hdf_file::Union{HDF5.File,HDF5.Group}, path::String, 
                     obj::SparseMatrixCSC)
-    for prop in propertynames(obj)
-        write(hdf_file, string(path, "/", prop), getproperty(obj, prop))
+    for field in fieldnames(SparseMatrixCSC)
+        write(hdf_file, string(path, "/", field), getfield(obj, field))
     end
 end
 
@@ -53,8 +53,8 @@ end
 
 
 function Base.write(hdf_file::Union{HDF5.File,HDF5.Group}, path::String, obj::BMFModel)
-    for prop in propertynames(obj)
-        write(hdf_file, string(path, "/", prop), getproperty(obj, prop))
+    for field in fieldnames(BMFModel)
+        write(hdf_file, string(path, "/", field), getfield(obj, field))
     end
 end
 
