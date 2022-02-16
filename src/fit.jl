@@ -2,9 +2,9 @@
 
 import ScikitLearnBase: fit! 
 
-function vprintln(a...; verbose=false)
+function vprint(a...; verbose=false)
     if verbose
-        println(string(a...))
+        print(string(a...))
     end
 end
 
@@ -62,7 +62,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Zero out the gradients
         map!(zero, gradients, gradients)
 
-        vprintln("EPOCH ", epoch; verbose=verbose)
+        vprint("EPOCH ", epoch; verbose=verbose)
 
         # Updates for column-wise and block-wise parameters:
         # Y, mu, sigma, theta, delta
@@ -88,7 +88,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                                          batch_A,
                                                                          batch_missing_mask,
                                                                          batch_nonmissing)
-
             # Compute the batch's likelihood loss gradients 
             # w.r.t. Y, mu, sigma, theta, delta
             grad_Y, grad_mu, grad_log_sigma,
@@ -98,8 +97,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                   params.log_sigma, 
                                                   batch_theta,
                                                   batch_log_delta)
-            
-            vprintln("\t\tRow batch:", row_batch; verbose=verbose)
 
             # Accumulate these gradients into the full gradients
             gradients.Y .+= grad_Y
@@ -127,8 +124,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Perform AdaGrad updates for Y, mu, sigma, theta, delta
         adagrad(params, gradients; lr=lr, 
                 fields=[:Y, :mu, :log_sigma, :theta, :log_delta])
-
-        vprintln("\tUPDATES FINISHED FOR Y, mu, sigma, theta, delta"; verbose=verbose)
 
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
@@ -166,8 +161,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
 
             # Add to the full gradient
             gradients.X .+= grad_X
-
-            vprintln("\t\tCol batch: ", col_batch, "\t", batch_loss; verbose=verbose)
         end
         
         # Compute prior gradient for X 
@@ -180,9 +173,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Perform AdaGrad update for X
         adagrad(params, gradients; lr=lr, fields=[:X])
         
-        vprintln("\tUPDATE FINISHED FOR X"; verbose=verbose)
-
-        vprintln("\tLoss: ", loss; verbose=verbose)
+        vprint("\tLoss: ", loss, "\n"; verbose=verbose)
     end
 
     return #history

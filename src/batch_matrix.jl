@@ -305,7 +305,7 @@ end
 function Base.:(*)(A::AbstractMatrix, B::BatchMatrix)
 
     result = zero(A)
-    Threads.@threads for j=1:length(B.col_batches)
+    for j=1:length(B.col_batches)
         col_range = B.col_batches[j]
         for (k, row_batch_idx) in B.row_batch_dicts[j] 
             result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .* B.values[j][k]
