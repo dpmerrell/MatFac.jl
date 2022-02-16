@@ -2,7 +2,6 @@
 
 import ScikitLearnBase: fit! 
 
-
 function vprintln(a...; verbose=false)
     if verbose
         println(string(a...))
@@ -57,7 +56,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
     col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
 
-
     # For each epoch
     for epoch=1:max_epochs
   
@@ -70,7 +68,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Y, mu, sigma, theta, delta
         # Iterate through minibatches of rows
         for row_batch in BatchIter(M, row_batch_size)
-            vprintln("\t\tRow batch:", row_batch; verbose=verbose)
             # Select the corresponding rows of X, theta, delta
             batch_X = view(params.X, :, row_batch)
             batch_theta = params.theta[row_batch, 1:N]
@@ -95,11 +92,14 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
             # Compute the batch's likelihood loss gradients 
             # w.r.t. Y, mu, sigma, theta, delta
             grad_Y, grad_mu, grad_log_sigma,
-            grad_theta, grad_log_delta = gradient(row_batch_log_lik, params.Y, 
-                                                                     params.mu,
-                                                                     params.log_sigma, 
-                                                                     batch_theta,
-                                                                     batch_log_delta)
+            grad_theta, grad_log_delta = gradient(row_batch_log_lik, 
+                                                  params.Y, 
+                                                  params.mu,
+                                                  params.log_sigma, 
+                                                  batch_theta,
+                                                  batch_log_delta)
+            
+            vprintln("\t\tRow batch:", row_batch; verbose=verbose)
 
             # Accumulate these gradients into the full gradients
             gradients.Y .+= grad_Y
@@ -114,10 +114,11 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         end
 
         # Compute prior gradients for Y, mu, sigma
-        grad_Y, grad_mu, grad_log_sigma = gradient(row_prior, 
-                                                   params.Y,
-                                                   params.mu,
-                                                   params.log_sigma)
+        loss, (grad_Y, grad_mu, grad_log_sigma) = withgradient(row_prior, 
+                                                               params.Y,
+                                                               params.mu,
+                                                               params.log_sigma)
+
         # Add prior gradients to full Y, mu, sigma gradients
         gradients.Y .+= grad_Y
         gradients.mu .+= grad_mu
@@ -132,7 +133,6 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
         for col_batch in BatchIter(N, col_batch_size)
-            vprintln("\t\tCol batch:", col_batch; verbose=verbose)
             
             # Select the corresponding columns of Y, mu, sigma, theta, delta
             batch_Y = view(params.Y, :, col_batch)
@@ -161,15 +161,18 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                                         batch_nonmissing)
             
             # Compute the likelihood loss gradients w.r.t. X
-            grad_X = gradient(col_batch_log_lik, params.X)[1]
+            batch_loss, (grad_X,) = withgradient(col_batch_log_lik, params.X)
+            loss += batch_loss
 
             # Add to the full gradient
             gradients.X .+= grad_X
 
+            vprintln("\t\tCol batch: ", col_batch, "\t", batch_loss; verbose=verbose)
         end
         
         # Compute prior gradient for X 
-        grad_X = gradient(col_prior, params.X)[1]
+        prior_loss, (grad_X,) = withgradient(col_prior, params.X)
+        loss += prior_loss
 
         # Add prior gradient to full X gradient
         gradients.X .+= grad_X
@@ -179,6 +182,7 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         
         vprintln("\tUPDATE FINISHED FOR X"; verbose=verbose)
 
+        vprintln("\tLoss: ", loss; verbose=verbose)
     end
 
     return #history
