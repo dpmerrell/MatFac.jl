@@ -64,4 +64,16 @@ function Base.map!(f::Function, destination::ModelParams,
 end
 
 
+function set_params!(model::BMFModel, mp::ModelParams)
+
+    model.X = mp.X
+    model.Y = mp.Y
+
+    model.mu = mp.mu
+    model.log_sigma = mp.log_sigma
+
+    model.theta_values = mp.theta.values
+    model.log_delta_values = mp.log_delta.values
+
+end
 

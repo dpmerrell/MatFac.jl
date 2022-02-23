@@ -8,10 +8,16 @@ function vprint(a...; verbose=false)
     end
 end
 
+function bm_summary(bm::BatchMatrix)
+    min_vals = [minimum(values(d)) for d in bm.values]
+    max_vals = [maximum(values(d)) for d in bm.values]
+
+    return string("MINS: ", min_vals, "\nMAXES: ", max_vals)
+end
 
 function fit!(model::BatchMatFacModel, A::AbstractMatrix;
-              capacity::Integer=Integer(1e8), max_epochs::Integer=1000, 
-              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-9,
+              capacity::Integer=Integer(1e8), max_epochs::Number=1000, 
+              lr::Real=0.01f0, abs_tol::Real=1e-9, rel_tol::Real=1e-6,
               verbose::Bool=false)
 
     # Move data to GPU
@@ -56,8 +62,12 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
     row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
     col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
 
+    prev_loss = Inf
+    loss = Inf
+
     # For each epoch
-    for epoch=1:max_epochs
+    epoch = 1
+    while epoch <= max_epochs
   
         # Zero out the gradients
         map!(zero, gradients, gradients)
@@ -121,9 +131,21 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         gradients.mu .+= grad_mu
         gradients.log_sigma .+= grad_log_sigma
 
+        #println("THETA GRADIENT:")
+        #println(bm_summary(gradients.theta))
+        
+        #println("LOG DELTA GRADIENT:")
+        #println(bm_summary(gradients.log_delta))
+
         # Perform AdaGrad updates for Y, mu, sigma, theta, delta
         adagrad(params, gradients; lr=lr, 
                 fields=[:Y, :mu, :log_sigma, :theta, :log_delta])
+
+        #println("UPDATED THETA:")
+        #println(bm_summary(params.theta))
+        
+        #println("UPDATED LOG DELTA:")
+        #println(bm_summary(params.log_delta))
 
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...
@@ -174,6 +196,17 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         adagrad(params, gradients; lr=lr, fields=[:X])
         
         vprint("\tLoss: ", loss, "\n"; verbose=verbose)
+
+        # Check termination conditions
+        loss_diff = prev_loss - loss 
+        if loss_diff < abs_tol
+            break
+        elseif loss_diff/loss < abs_tol
+            break
+        else
+            prev_loss = loss
+            epoch += 1
+        end
     end
 
     return #history

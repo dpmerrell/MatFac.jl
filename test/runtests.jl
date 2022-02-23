@@ -45,7 +45,7 @@ function batch_matrix_tests()
                     Dict("cat"=>1., "dog"=>2., "fish"=>4.)]
 
         # Construction
-        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
+        A = BMF.batch_matrix(deepcopy(r_matrix), row_batch_ids, col_batches)
     
         @test A == BMF.BatchMatrix(r_matrix, [Dict("cat"=>[1,2],"dog"=>[3,4,5],"fish"=>[6]),
                                               Dict("cat"=>[1,2],"dog"=>[3,4,5],"fish"=>[6])],
@@ -87,7 +87,7 @@ function batch_matrix_tests()
                            Dict("cat"=>1., "dog"=>3., "fish"=>5.)]
 
         # Additive row update (partially overlapping blocks)
-        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
+        A = BMF.batch_matrix(deepcopy(r_matrix), row_batch_ids, col_batches)
         B = A[2:4, 1:7]
         B.values = [Dict("cat"=>2., "dog"=>3.),
                     Dict("cat"=>-2.,"dog"=>-3.)]
@@ -97,7 +97,7 @@ function batch_matrix_tests()
                            Dict("cat"=>0., "dog"=>0., "fish"=>4.)]
 
         # Backpropagation for addition
-        A = BMF.batch_matrix(r_matrix, row_batch_ids, col_batches)
+        A = BMF.batch_matrix(deepcopy(r_matrix), row_batch_ids, col_batches)
         B = A[2:4, 1:7]
         #B.values = [2. -2.; 3. -3.]
         B.values = [Dict("cat"=>2., "dog"=>3.),
@@ -211,8 +211,8 @@ function simulate_data(M, N, K, row_batches, n_logistic)
     end
 
     row_batch_ids = [row_batches, row_batches]
-    theta = BMF.batch_matrix(theta_values, row_batch_ids, noise_models)
-    log_delta = BMF.batch_matrix(log_delta_values, row_batch_ids, noise_models)
+    theta = BMF.batch_matrix(deepcopy(theta_values), row_batch_ids, noise_models)
+    log_delta = BMF.batch_matrix(deepcopy(log_delta_values), row_batch_ids, noise_models)
 
     A = BMF.forward(X, Y, mu, log_sigma, theta, log_delta,
                    noise_map)
@@ -313,8 +313,8 @@ function model_core_tests()
     bm_values = [Dict(i => 0. for i=1:n_batches) for _=1:2]
     bm_row_batches = [row_batches, row_batches]
 
-    log_delta = BMF.batch_matrix(bm_values, bm_row_batches, col_batches)
-    theta = BMF.batch_matrix(bm_values, bm_row_batches, col_batches)
+    log_delta = BMF.batch_matrix(deepcopy(bm_values), bm_row_batches, col_batches)
+    theta = BMF.batch_matrix(deepcopy(bm_values), bm_row_batches, col_batches)
 
     feature_link_map = BMF.ColBlockMap(Function[BMF.logistic_link, BMF.quad_link],
                                        col_batch_ranges)
@@ -462,14 +462,8 @@ function adagrad_tests()
     bm_row_batches = [row_batches, row_batches]
     bm_col_batches = repeat(1:2, inner=n_logistic)
     
-    log_delta = BMF.batch_matrix(bm_values, bm_row_batches, bm_col_batches)
-    theta = BMF.batch_matrix(bm_values, bm_row_batches, bm_col_batches)
-    #theta = BMF.BatchMatrix([zeros(4) for _=1:2],
-    #                        [[1:5,6:10,11:15,16:20] for _=1:2],
-    #                        [1:10,11:20])
-    #log_delta = BMF.BatchMatrix([zeros(4) for _=1:2],
-    #                            [[1:5,6:10,11:15,16:20] for _=1:2],
-    #                            [1:10,11:20])
+    log_delta = BMF.batch_matrix(deepcopy(bm_values), bm_row_batches, bm_col_batches)
+    theta = BMF.batch_matrix(deepcopy(bm_values), bm_row_batches, bm_col_batches)
 
     params = BMF.ModelParams(X,Y,mu,log_sigma,theta,log_delta)
 

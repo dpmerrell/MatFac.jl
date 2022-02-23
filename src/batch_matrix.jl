@@ -36,7 +36,7 @@ function batch_matrix(values::Vector{Dict{T,U}},
     row_batch_dicts = Dict{T,Vector{Int}}[ids_to_idx_dict(v) for 
                                             v in row_batch_ids] 
     
-    return BatchMatrix(deepcopy(values), row_batch_dicts, col_batches)
+    return BatchMatrix(values, row_batch_dicts, col_batches)
 
 end
 
