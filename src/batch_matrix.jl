@@ -124,15 +124,15 @@ end
 #######################################
 # `reindex` operation
 function reindex!(A::BatchMatrix{T}, new_row_start::Integer, 
-                  new_col_start::Integer) where T<:Number where U<:KeyType
+                  new_col_start::Integer) where T<:Number
 
     c_delta = new_col_start - A.col_batches[1].start
     A.col_batches = [(rng.start + c_delta):(rng.stop + c_delta) for rng in A.col_batches]
    
-    for (i, row_dict) in enumerate(A.row_batch_dicts)
-        r_min = minimum(v[1] for v in values(row_dict))
+    for (j, batch_vecs) in enumerate(A.row_batch_idx)
+        r_min = minimum(v[1] for v in batch_vecs)
         r_delta = new_row_start - r_min
-        A.row_batch_dicts[i] = Dict{U,Vector{Int}}(k => v .+ r_delta for (k,v) in row_dict)
+        A.row_batch_idx[j] = Vector{Int}[v .+ r_delta for v in batch_vecs]
     end
 
 end
@@ -153,24 +153,13 @@ end
 ####################################
 # Map operations
 
-function Base.map(f::Function, d::Dict{T,U}) where T where U<:Number
-    return Dict{T,U}(k => f(v) for (k,v) in d)
-end
-
-function Base.map(f::Function, collection::BatchMatrix{T}) where T<:Number where U<:KeyType
+function Base.map(f::Function, collection::BatchMatrix{T}) where T<:Number
         
-    new_values = Dict{U,T}[map(f, v) for v in collection.values]
-    return BatchMatrix(new_values,
-                       collection.row_batch_dicts,
-                       collection.col_batches)
+    new_values = Vector{T}[map(f, v) for v in collection.values]
+    return BatchMatrix(collection.col_batches, collection.unq_row_batches,
+                       collection.row_batch_idx, new_values)
 end
 
-function Base.map!(f::Function, dest::Dict{T,U},
-                   collection::Dict{T,U}) where T where U<:Number
-    for k in keys(dest)
-        dest[k] = f(collection[k])
-    end
-end
 
 function Base.map!(f::Function, destination::BatchMatrix, 
                                 collection::BatchMatrix)
@@ -188,15 +177,16 @@ function Base.exp(A::BatchMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(exp), A::BatchMatrix{U}) where U<:Number where T<:KeyType
+function ChainRules.rrule(::typeof(exp), A::BatchMatrix{U}) where U<:Number 
 
     Z = exp(A)
 
     function bm_exp_pullback(Z_bar::BatchMatrix{U})
-        A_bar_values = Dict{T,U}[binop(*, Z_bar_d, Z_d) for (Z_bar_d, Z_d) in zip(Z_bar.values, Z.values)]
-        return ChainRules.NoTangent(), BatchMatrix(A_bar_values,
-                                                   Z_bar.row_batch_dicts,
-                                                   Z_bar.col_batches)
+        A_bar_values = Vector{U}[Z_bar.values[i] .* Z.values[i] for i=1:length(Z_bar.values)]
+        return ChainRules.NoTangent(), BatchMatrix(Z_bar.col_batches,
+                                                   Z_bar.unq_row_batches,
+                                                   Z_bar.row_batch_idx,
+                                                   A_bar_values)
     end
 
     return Z, bm_exp_pullback
@@ -214,8 +204,8 @@ function Base.:(+)(A::AbstractMatrix, B::BatchMatrix)
     result = zero(A)
     for j=1:length(B.col_batches)
         col_range = B.col_batches[j]
-        for (k, row_batch_idx) in B.row_batch_dicts[j]
-            result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .+ B.values[j][k]
+        for (i, row_batch_idx) in enumerate(B.row_batch_idx[j])
+            result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .+ B.values[j][i]
         end
     end
     return result
@@ -232,8 +222,8 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BatchMatrix)
 
         for j=1:length(B.col_batches)
             col_range = B.col_batches[j]
-            for (k,row_idx) in B.row_batch_dicts[j]
-                B_bar.values[j][k] = sum(Z_bar[row_idx,col_range])
+            for (i,row_idx) in enumerate(B.row_batch_idx[j])
+                B_bar.values[j][i] = sum(Z_bar[row_idx,col_range])
             end
         end
 
@@ -253,65 +243,14 @@ end
 """
 function add!(A::BatchMatrix, B::BatchMatrix)
 
-    for (j, (A_rb_dict, B_rb_dict)) in enumerate(zip(A.row_batch_dicts,
-                                                     B.row_batch_dicts))
-        for (k, b_batch_idx) in B_rb_dict
-
-            overlap = length(b_batch_idx)/length(A_rb_dict[k])
-            A.values[j][k] += (overlap * B.values[j][k])
+    for (j, (A_rb_v, B_rb_v)) in enumerate(zip(A.row_batch_idx,
+                                               B.row_batch_idx))
+        for (i, batch_id) in enumerate(B.unq_row_batches[j])
+            overlap = length(B_rb_v[i])/length(A_rb_v[batch_id])
+            A.values[j][batch_id] += (overlap * B.values[j][i])
         end
     end
 end
-
-#function add!(A::BatchMatrix, B::BatchMatrix)
-#
-#    for (j, (A_row_ranges, B_row_ranges)) in enumerate(zip(A.row_ranges_vec,
-#                                                           B.row_ranges_vec))
-#
-#        # Locate the row index of the first A.value touched by B
-#        A_starts = Int[rng.start for rng in A_row_ranges]
-#        A_stops =  Int[rng.stop for rng in A_row_ranges]
-#        B_starts = Int[rng.start for rng in B_row_ranges]
-#        B_stops =  Int[rng.stop for rng in B_row_ranges]
-#  
-#        # Initialize the A_idx and B_idx 
-#        if A_starts[1] == B_starts[1]
-#            A_idx = 1
-#            B_idx = 1
-#        elseif A_starts[1] < B_starts[1]
-#            B_idx = 1
-#            A_idx = searchsorted(A_starts, B_starts[1]).stop
-#        else
-#            A_idx = 1
-#            B_idx = searchsorted(B_starts, A_starts[1]).stop
-#        end
-#
-#        # Iterate through the subsequent A_idxs, B_idxs
-#        while (A_idx <= length(A_starts)) & (B_idx <= length(B_starts)) 
-#
-#            # Compute the fraction of current A covered by
-#            # current B
-#            overlap = ( (min(A_stops[A_idx], B_stops[B_idx]) 
-#                        - max(A_starts[A_idx], B_starts[B_idx]) + 1)
-#                        / (A_stops[A_idx] - A_starts[A_idx] + 1)
-#                       )
-#
-#            # Update the current A value by the current B value
-#            A.values[j][A_idx] += (overlap * B.values[j][B_idx])
-#
-#            # Update the A_idx or B_idx
-#            if A_stops[A_idx] == B_stops[B_idx]
-#                A_idx += 1
-#                B_idx += 1
-#            elseif A_stops[A_idx] < B_stops[B_idx]
-#                A_idx += 1
-#            else
-#                B_idx += 1
-#            end
-#        end
-#
-#    end
-#end
 
 
 # Update A by adding B to the given rows.
@@ -319,8 +258,6 @@ end
 # weighted by the fraction covered by each of them.
 # Used during "fit" to update the model's batch parameters. 
 function row_add!(A::BatchMatrix, A_rows::UnitRange, B::BatchMatrix)
-
-    #@assert size(B)[1] == (A_rows.stop - A_rows.start + 1)
 
     reindex!(B, A_rows.start, 1)
     add!(A, B)
@@ -339,8 +276,8 @@ function Base.:(*)(A::AbstractMatrix, B::BatchMatrix)
     result = zero(A)
     for j=1:length(B.col_batches)
         col_range = B.col_batches[j]
-        for (k, row_batch_idx) in B.row_batch_dicts[j] 
-            result[row_batch_idx,col_range] .= A[row_batch_idx,col_range] .* B.values[j][k]
+        for (i, batch_idx) in enumerate(B.row_batch_idx[j]) 
+            result[batch_idx,col_range] .= A[batch_idx,col_range] .* B.values[j][i]
         end
     end
     return result
@@ -356,9 +293,9 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BatchMatrix)
         B_bar = zero(B)
         for j=1:length(B.col_batches)
             col_range = B.col_batches[j]
-            for (k, row_batch_idx) in B.row_batch_dicts[j]
-                A_bar[row_batch_idx,col_range] .= (Z_bar[row_batch_idx,col_range] .* B.values[j][k])
-                B_bar.values[j][k] = sum(Z_bar[row_batch_idx,col_range] .* A[row_batch_idx,col_range])
+            for (i, batch_idx) in enumerate(B.row_batch_idx[j])
+                A_bar[batch_idx,col_range] .= (Z_bar[batch_idx,col_range] .* B.values[j][i])
+                B_bar.values[j][i] = sum(Z_bar[batch_idx,col_range] .* A[batch_idx,col_range])
             end
         end
 
