@@ -61,6 +61,9 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
     mu = my_randn(BMFFloat, N) ./ BMFFloat(100.0)
     log_sigma = my_zeros(BMFFloat, N)
 
+    # NOTE: the order of appearance in `feature_batch_ids`
+    #       at construction determines the order of 
+    #       obects in BatchMatrix quantities (theta, sigma)
     unq_feature_batches = unique(feature_batch_ids)
     n_feature_batches = length(unq_feature_batches)
 

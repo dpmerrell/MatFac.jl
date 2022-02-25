@@ -38,17 +38,31 @@ function ids_to_ranges(id_vec)
 end
 
 
-function ids_to_idx_dict(id_vec)
+function ids_to_idx_vecs(id_vec)
 
     unq_ids = unique(id_vec)
-    idx_dict = Dict([unq_id => Int[] for unq_id in unq_ids])
+    name_to_number = Dict(name=>number for (number,name) in enumerate(unq_ids)) 
+    idx_vec = Vector{Int}[Int[] for unq_id in unq_ids]
 
     for (i,name) in enumerate(id_vec)
-        push!(idx_dict[name], i)
+        push!(idx_vec[name_to_number[name]], i)
     end
 
-    return idx_dict
+    return idx_vec
 end
+
+
+#function values_dict_to_vec(values_dict, row_batch_vec)
+#
+#    unq_ids = unique(row_batch_vec)
+#    id_to_idx = Dict(id => idx for (idx, id) in enumerate(unq_ids))
+#    values_vec = zeros(length(unq_ids))
+#    for (k,v) in values_dict
+#        values_vec[id_to_idx[k]] = v
+#    end
+#    return values_vec
+#end
+
 
 
 function subset_ranges(ranges::Vector, rng::UnitRange) 
@@ -74,16 +88,17 @@ function subset_ranges(ranges::Vector, rng::UnitRange)
 end
 
 
-function subset_idx_dict(idx_dict::Dict{T,Vector{Int}}, rng::UnitRange) where T
+function subset_idx_vecs(idx_vecs::Vector{Vector{Int}}, rng::UnitRange)
 
     r_min = rng.start
     r_max = rng.stop
 
     @assert r_min < r_max
 
-    new_dict = Dict{T,Vector{Int}}()
+    new_vec = Vector{Int}[]
+    kept_idx = Int[]
     # Loop the index vectors
-    for (k, idx_vec) in idx_dict
+    for (i, idx_vec) in enumerate(idx_vecs)
         # If the given range intersects with this 
         # index vector, then we keep a subset of it
         if (r_min <= idx_vec[end]) & (r_max >= idx_vec[1])
@@ -91,12 +106,13 @@ function subset_idx_dict(idx_dict::Dict{T,Vector{Int}}, rng::UnitRange) where T
             stop_idx = searchsorted(idx_vec, r_max).stop
 
             if start_idx <= stop_idx
-                new_dict[k] = idx_vec[start_idx:stop_idx]
+                push!(new_vec, idx_vec[start_idx:stop_idx])
+                push!(kept_idx, i)
             end
         end
     end
 
-    return new_dict
+    return new_vec, kept_idx
 end
 
 

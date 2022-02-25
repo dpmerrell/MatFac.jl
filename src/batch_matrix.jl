@@ -6,10 +6,11 @@ import Base: size, getindex, view, map!
 ##########################################
 # "BATCH MATRIX" DEFINITION 
 ##########################################
-mutable struct BatchMatrix{T<:Number, U<:Union{String,Int}}
-    values::Vector{Dict{U,T}}
-    row_batch_dicts::Vector{Dict{U,Vector{Int}}}
+mutable struct BatchMatrix{T<:Number}
     col_batches::Vector{UnitRange}
+    unq_row_batches::Vector{Vector{Int}}
+    row_batch_idx::Vector{Vector{Vector{Int}}}
+    values::Vector{Vector{T}}
 end
 
 
@@ -32,27 +33,47 @@ function batch_matrix(values::Vector{Dict{T,U}},
     N = length(row_batch_ids[1])
     @assert all([length(v) == N for v in row_batch_ids])
 
+    # Translate column batch ids to ranges of indices
     col_batches = ids_to_ranges(col_batch_ids)
-    row_batch_dicts = Dict{T,Vector{Int}}[ids_to_idx_dict(v) for 
-                                            v in row_batch_ids] 
-    
-    return BatchMatrix(values, row_batch_dicts, col_batches)
+
+    # Encode the row batch ids as integers
+    unq_row_batches = Vector{T}[unique(v) for v in row_batch_ids]
+    row_batch_encoders = [Dict(name=>i for (i,name) in enumerate(u)) 
+                                       for u in unq_row_batches]
+    n_row_batches = [length(v) for v in unq_row_batches]
+    enc_row_batch_ids = Vector{Int}[Int[rbe[b] for b in rbvec] 
+                                    for (rbe,rbvec) in zip(row_batch_encoders, 
+                                                           row_batch_ids)]
+    enc_unq_row_batches = Vector{Int}[collect(1:n) for n in n_row_batches]
+
+    # Translate the (integer) row batch ids to index vectors 
+    row_batch_idx = Vector{Vector{Int}}[Vector{Int}[Int[] for _=1:n] 
+                                                          for n in n_row_batches]
+    for (j, rbvec) in enumerate(enc_row_batch_ids)
+        for (i, rb) in enumerate(rbvec)
+            push!(row_batch_idx[j][rb], i)
+        end
+    end
+
+    # Populate the values 
+    values_vecs = Vector{U}[U[vdict[rb] for rb in urb_vec] 
+                            for (urb_vec, vdict) in zip(unq_row_batches, values)]
+
+    return BatchMatrix(col_batches, enc_unq_row_batches, 
+                       row_batch_idx, values_vecs)
 
 end
 
 
 ######################################
 # zero function
-function Base.zero(d::Dict{T,U}) where T where U<:Number
-    return Dict{T,U}(k => zero(v) for (k,v) in d)
-end
+function Base.zero(A::BatchMatrix{T}) where T<:Number 
 
-
-function Base.zero(A::BatchMatrix{T,U}) where T<:Number where U<:KeyType
-
-    copy_values = Dict{U,T}[zero(v) for v in A.values]
-    return BatchMatrix(copy_values, deepcopy(A.row_batch_dicts),
-                                    copy(A.col_batches))
+    copy_values = Vector{T}[zero(v) for v in A.values]
+    return BatchMatrix(copy(A.col_batches), 
+                       deepcopy(A.unq_row_batches),
+                       deepcopy(A.row_batch_idx), 
+                       copy_values)
 end
 
 
@@ -60,8 +81,8 @@ end
 # "size" operator
 # WARNING: non-constant complexity!!
 function size(A::BatchMatrix)
-    min_row = minimum(v[1] for v in values(A.row_batch_dicts[1]))
-    max_row = maximum(v[end] for v in values(A.row_batch_dicts[1]))
+    min_row = minimum(v[1] for v in A.row_batch_idx[1])
+    max_row = maximum(v[end] for v in A.row_batch_idx[1])
     return (max_row - min_row + 1,
             A.col_batches[end].stop - A.col_batches[1].start + 1)
 end
@@ -69,32 +90,40 @@ end
 
 ######################################
 # `getindex` operation
-function getindex(A::BatchMatrix{T,U}, row_range::UnitRange, col_range::UnitRange) where T<:Number where U<:KeyType
+function getindex(A::BatchMatrix{T}, row_range::UnitRange, col_range::UnitRange) where T<:Number 
     
     c_min = col_range.start
     new_col_batches, c_min_idx, c_max_idx = subset_ranges(A.col_batches, col_range)
-    new_col_batches = UnitRange[(rng.start - c_min + 1):(rng.stop - c_min + 1) for rng in new_col_batches]
+    new_col_batches = UnitRange[(rng.start - c_min + 1):(rng.stop - c_min + 1) 
+                                for rng in new_col_batches]
     
-    new_values = Dict{U,T}[] 
-    new_row_batch_dicts = Dict{U,Vector{Int}}[]
+    new_values = Vector{T}[] 
+    new_unq_row_batches = Vector{Int}[]
+    new_row_batch_idx = Vector{Vector{Int}}[]
 
     for cbatch=c_min_idx:c_max_idx
-        old_row_batches = A.row_batch_dicts[cbatch]
+        old_row_batches = A.unq_row_batches[cbatch]
+        old_row_batch_idx = A.row_batch_idx[cbatch]
         r_min = row_range.start - 1
         
-        new_row_batch_dict = subset_idx_dict(old_row_batches, row_range)
-        new_row_batch_dict = Dict(k => (v .- r_min) for (k,v) in new_row_batch_dict)
-        push!(new_row_batch_dicts, new_row_batch_dict)
-        push!(new_values, Dict{U,T}(k => A.values[cbatch][k] for k in keys(new_row_batch_dict)))
+        new_rbi, new_unq_batch_idx = subset_idx_vecs(old_row_batch_idx, row_range)
+
+        new_rbi = [v .- r_min for v in new_rbi]
+        push!(new_unq_row_batches, old_row_batches[new_unq_batch_idx])
+        push!(new_row_batch_idx, new_rbi)
+        push!(new_values, A.values[cbatch][new_unq_batch_idx])
     end
 
-    return BatchMatrix(new_values, new_row_batch_dicts, new_col_batches)
+    return BatchMatrix(new_col_batches,
+                       new_unq_row_batches,
+                       new_row_batch_idx,
+                       new_values)
 end
 
 
 #######################################
 # `reindex` operation
-function reindex!(A::BatchMatrix{T,U}, new_row_start::Integer, 
+function reindex!(A::BatchMatrix{T}, new_row_start::Integer, 
                   new_col_start::Integer) where T<:Number where U<:KeyType
 
     c_delta = new_col_start - A.col_batches[1].start
@@ -112,9 +141,12 @@ end
 ####################################
 # Equality operator
 function Base.:(==)(A::BatchMatrix, B::BatchMatrix)
-    return ((A.values == B.values) & 
-            (A.row_batch_dicts == B.row_batch_dicts) & 
-            (A.col_batches == B.col_batches))
+    for fn in fieldnames(BatchMatrix)
+        if getproperty(A, fn) != getproperty(B, fn)
+            return false
+        end
+    end
+    return true
 end
 
 
@@ -125,7 +157,7 @@ function Base.map(f::Function, d::Dict{T,U}) where T where U<:Number
     return Dict{T,U}(k => f(v) for (k,v) in d)
 end
 
-function Base.map(f::Function, collection::BatchMatrix{T,U}) where T<:Number where U<:KeyType
+function Base.map(f::Function, collection::BatchMatrix{T}) where T<:Number where U<:KeyType
         
     new_values = Dict{U,T}[map(f, v) for v in collection.values]
     return BatchMatrix(new_values,
@@ -156,11 +188,11 @@ function Base.exp(A::BatchMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(exp), A::BatchMatrix{U,T}) where U<:Number where T<:KeyType
+function ChainRules.rrule(::typeof(exp), A::BatchMatrix{U}) where U<:Number where T<:KeyType
 
     Z = exp(A)
 
-    function bm_exp_pullback(Z_bar::BatchMatrix{U,T})
+    function bm_exp_pullback(Z_bar::BatchMatrix{U})
         A_bar_values = Dict{T,U}[binop(*, Z_bar_d, Z_d) for (Z_bar_d, Z_d) in zip(Z_bar.values, Z.values)]
         return ChainRules.NoTangent(), BatchMatrix(A_bar_values,
                                                    Z_bar.row_batch_dicts,
