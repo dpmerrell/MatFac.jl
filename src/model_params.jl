@@ -72,8 +72,8 @@ function set_params!(model::BMFModel, mp::ModelParams)
     model.mu = mp.mu
     model.log_sigma = mp.log_sigma
 
-    model.theta_values = mp.theta.values
-    model.log_delta_values = mp.log_delta.values
+    model.theta_values = decode_values(mp.theta, model.sample_batch_ids)
+    model.log_delta_values = decode_values(mp.log_delta, model.sample_batch_ids)
 
 end
 

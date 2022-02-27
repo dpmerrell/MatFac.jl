@@ -210,6 +210,8 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         end
     end
 
+    set_params!(model, params)
+
     return #history
 end
 

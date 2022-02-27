@@ -64,6 +64,19 @@ function batch_matrix(values::Vector{Dict{T,U}},
 
 end
 
+function decode_values(bm::BatchMatrix{T}, 
+                       row_batch_ids::Vector{Vector{U}}) where T<:Number where U<:KeyType
+
+    unq_rb_ids = [unique(rb_ids) for rb_ids in row_batch_ids]
+    result = Dict{U,T}[Dict{U,T}() for _ in unq_rb_ids]
+    for (d, v_vec, unq_id_vec) in zip(result, bm.values, unq_rb_ids)
+        for (val, batch_id) in zip(v_vec, unq_id_vec)
+            d[batch_id] = val
+        end
+    end
+    return result
+end
+
 
 ######################################
 # zero function
