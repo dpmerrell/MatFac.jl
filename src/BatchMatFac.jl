@@ -1,6 +1,7 @@
 module BatchMatFac
 
-using ChainRules, ChainRulesCore, Zygote, CUDA, HDF5, LinearAlgebra, SparseArrays
+using ChainRules, ChainRulesCore, Zygote, CUDA, HDF5, 
+      LinearAlgebra, SparseArrays, Statistics
 
 include("typedefs.jl")
 include("util.jl")

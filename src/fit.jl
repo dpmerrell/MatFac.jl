@@ -54,13 +54,20 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
                                    model.feature_noise_models)
 
     # Some useful curries of the prior function
-    curried_prior = (X, Y, mu, log_sigma) -> neg_log_prior(X, model.X_reg, 
-                                                           Y, model.Y_reg, 
-                                                           mu, model.mu_reg, 
-                                                           log_sigma, 
-                                                           model.log_sigma_reg)
-    row_prior = (Y, mu, log_sigma) -> curried_prior(params.X, Y, mu, log_sigma)
-    col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma)
+    curried_prior = (X, Y, mu, log_sigma, 
+                     theta, log_delta) -> neg_log_prior(X, model.X_reg, 
+                                                        Y, model.Y_reg, 
+                                                        mu, model.mu_reg, 
+                                                        log_sigma, 
+                                                        model.log_sigma_reg,
+                                                        theta, model.theta_reg,
+                                                        log_delta, model.log_delta_reg)
+    row_prior = (Y, mu, log_sigma, theta, log_delta) -> curried_prior(params.X, Y, 
+                                                                      mu, log_sigma,
+                                                                      theta, log_delta)
+    col_prior = X -> curried_prior(X, params.Y, params.mu, params.log_sigma,
+                                   params.theta, params.log_delta)
+
 
     prev_loss = Inf
     loss = Inf
@@ -121,31 +128,25 @@ function fit!(model::BatchMatFacModel, A::AbstractMatrix;
         end
 
         # Compute prior gradients for Y, mu, sigma
-        loss, (grad_Y, grad_mu, grad_log_sigma) = withgradient(row_prior, 
-                                                               params.Y,
-                                                               params.mu,
-                                                               params.log_sigma)
+        loss, (grad_Y, grad_mu, grad_log_sigma,
+               grad_theta, grad_log_delta) = withgradient(row_prior, 
+                                                          params.Y,
+                                                          params.mu,
+                                                          params.log_sigma,
+                                                          params.theta,
+                                                          params.log_delta)
 
         # Add prior gradients to full Y, mu, sigma gradients
         gradients.Y .+= grad_Y
         gradients.mu .+= grad_mu
         gradients.log_sigma .+= grad_log_sigma
-
-        #println("THETA GRADIENT:")
-        #println(bm_summary(gradients.theta))
-        
-        #println("LOG DELTA GRADIENT:")
-        #println(bm_summary(gradients.log_delta))
+        binop!(.+, gradients.theta.values, grad_theta.values)
+        binop!(.+, gradients.log_delta.values, grad_log_delta.values)
 
         # Perform AdaGrad updates for Y, mu, sigma, theta, delta
         adagrad(params, gradients; lr=lr, 
                 fields=[:Y, :mu, :log_sigma, :theta, :log_delta])
 
-        #println("UPDATED THETA:")
-        #println(bm_summary(params.theta))
-        
-        #println("UPDATED LOG DELTA:")
-        #println(bm_summary(params.log_delta))
 
         # Updates for row-wise model parameters (i.e., X)
         # Iterate through minibatches of columns...

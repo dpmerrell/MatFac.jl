@@ -58,10 +58,43 @@ function ChainRules.rrule(::typeof(matrix_nlprior), X::AbstractMatrix, X_reg::Ve
 end
 
 
+function batch_param_prior(param::BatchMatrix{T}, weight::Number) where T <: Number
+
+    means = map(mean, param.values)
+    diffs = Vector{Vector{T}}(undef, length(means))
+    for i=1:length(diffs)
+        diffs[i] = param.values[i] .- means[i]
+    end
+    return 0.5 * weight * sum(dot(d,d) for d in diffs)
+end
+
+
+function ChainRules.rrule(::typeof(batch_param_prior), 
+                          param::BatchMatrix{T}, weight::Number) where T <: Number
+    
+    means = map(mean, param.values)
+    diffs = Vector{Vector{T}}(undef, length(means))
+    for i=1:length(diffs)
+        diffs[i] = param.values[i] .- means[i]
+    end
+
+    function batch_param_prior_pullback(loss_bar)
+        param_bar = zero(param)
+        param_bar.values = diffs
+        return ChainRules.NoTangent(), param_bar, ChainRules.NoTangent()
+    end
+
+    loss = 0.5 * weight * sum(dot(d,d) for d in diffs)
+    return loss, batch_param_prior_pullback
+end
+
+
 function neg_log_prior(X::AbstractMatrix, X_reg::Vector{<:AbstractMatrix}, 
                        Y::AbstractMatrix, Y_reg::Vector{<:AbstractMatrix}, 
                        mu::AbstractVector, mu_reg::AbstractMatrix, 
-                       log_sigma::AbstractVector, log_sigma_reg::AbstractMatrix)
+                       log_sigma::AbstractVector, log_sigma_reg::AbstractMatrix,
+                       theta::BatchMatrix, theta_reg::Number, 
+                       log_delta::BatchMatrix, log_delta_reg::Number)
     
     loss = BMFFloat(0.0f0)
 
@@ -71,6 +104,9 @@ function neg_log_prior(X::AbstractMatrix, X_reg::Vector{<:AbstractMatrix},
     loss += BMFFloat(0.5f0) * dot(mu, mu_reg * mu)
     loss += BMFFloat(0.5f0) * dot(log_sigma, log_sigma_reg * log_sigma)
 
+    loss += batch_param_prior(theta, theta_reg)
+    loss += batch_param_prior(log_delta, log_delta_reg)
+
     return loss
 
 end
@@ -79,7 +115,8 @@ end
 function neg_log_prob(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_reg::Vector{T}, 
                       mu::AbstractVector, mu_reg::BMFRegMat, 
                       log_sigma::AbstractVector, log_sigma_reg::BMFRegMat,
-                      theta::BatchMatrix, log_delta::BatchMatrix, 
+                      theta::BatchMatrix, theta_reg::Number, 
+                      log_delta::BatchMatrix, log_delta_reg::Number, 
                       feature_link_map::ColBlockMap, feature_loss_map::ColBlockMap, 
                       D::AbstractMatrix, missing_mask::AbstractMatrix,
                       nonmissing::AbstractMatrix) where T <: AbstractMatrix
@@ -87,7 +124,8 @@ function neg_log_prob(X::AbstractMatrix, X_reg::Vector{T}, Y::AbstractMatrix, Y_
     nlp = neg_log_likelihood(X, Y, mu, log_sigma, theta, log_delta,
                              feature_link_map, feature_loss_map, D,
                              missing_mask, nonmissing)
-    nlp += neg_log_prior(X, X_reg, Y, Y_reg, mu, mu_reg, log_sigma, log_sigma_reg)
+    nlp += neg_log_prior(X, X_reg, Y, Y_reg, mu, mu_reg, log_sigma, log_sigma_reg,
+                         theta, theta_reg, log_delta, log_delta_reg)
 
     return nlp
 

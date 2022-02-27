@@ -22,12 +22,12 @@ function util_tests()
                               [4,5,7,11],
                               [8,9,12,13]]
 
-        kept_idx, v_subset = BMF.subset_idx_vecs(my_idx_vecs, 5:11)
+        v_subset, kept_idx = BMF.subset_idx_vecs(my_idx_vecs, 5:11)
         @test kept_idx == [1,2,3]
         @test v_subset == [[6,10],
                            [5,7,11],
                            [8,9]]
-        kept_idx, v_subset = BMF.subset_idx_vecs(my_idx_vecs, 1:7)
+        v_subset, kept_idx = BMF.subset_idx_vecs(my_idx_vecs, 1:7)
         @test kept_idx == [1,2]
         @test v_subset == [[1,2,3,6],
                            [4,5,7]]
@@ -88,8 +88,6 @@ function batch_matrix_tests()
         # Additive row update (100% overlapping batches)
         #B.values = [[1., 1.], [1., 1.]]
         map!(x->1, B, B)
-        println(A)
-        println(B)
         BMF.row_add!(A, 3:6, B)
         @test A.values == [[1., 3., 4.], 
                            [1., 3., 5.]]
@@ -354,20 +352,19 @@ function model_core_tests()
         @test grad_X == test_grad_X
 
         test_grad_Y = CUDA.zeros(K, N)
-        #test_grad_Y = [Dict(k=>test_grad_Y[k,j] for k=1:K) for j=1:N]
         @test grad_Y == test_grad_Y
 
         test_grad_theta = [zeros(n_batches) for _=1:2]
         test_grad_theta[1] .= 0.25 * n_logistic * div(M,n_batches)
         test_grad_theta[2] .= n_logistic * div(M,n_batches)
-        test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
+        #test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_theta.values == test_grad_theta
        
         test_grad_sigma = CUDA.zeros(N)
         @test grad_log_sigma == test_grad_sigma
 
         test_grad_delta = [zeros(n_batches) for _=1:2]
-        test_grad_delta = [Dict(k=>test_grad_delta[j][k] for k=1:n_batches) for j=1:2]
+        #test_grad_delta = [Dict(k=>test_grad_delta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_log_delta.values == test_grad_delta
 
     end
@@ -413,14 +410,17 @@ function model_core_tests()
         @test grad_mu == test_grad_mu 
         @test grad_log_sigma == CUDA.zeros(N)
         test_grad_theta = [zeros(n_batches) for _=1:2]
-        test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
+        #test_grad_theta = [Dict(k=>test_grad_theta[j][k] for k=1:n_batches) for j=1:2]
         @test grad_theta.values == test_grad_theta
-        test_grad_delta = [Dict(k=> 0. for k=1:n_batches) for j=1:2]
+        #test_grad_delta = [Dict(k=> 0. for k=1:n_batches) for j=1:2]
+        test_grad_delta = deepcopy(test_grad_theta)
         @test grad_log_delta.values == test_grad_delta 
 
     end
 
     X_reg, Y_reg, mu_reg, log_sigma_reg = generate_regularizers(M, N, K)
+    theta_reg = 1.0
+    log_delta_reg = 1.0
 
     @testset "Priors" begin
 
@@ -428,24 +428,33 @@ function model_core_tests()
         loss = BMF.neg_log_prior(X, X_reg, 
                                  Y, Y_reg, 
                                  mu, mu_reg, 
-                                 log_sigma, log_sigma_reg)
+                                 log_sigma, log_sigma_reg,
+                                 theta, theta_reg,
+                                 log_delta, log_delta_reg)
         @test loss == 0
 
         # Gradient
-        curried_prior = (X, Y, mu, log_sigma) -> BMF.neg_log_prior(X, X_reg,
-                                                                   Y, Y_reg,
-                                                                   mu, mu_reg,
-                                                                   log_sigma, 
-                                                                   log_sigma_reg)
+        curried_prior = (X, Y, mu, log_sigma, 
+                         theta, log_delta) -> BMF.neg_log_prior(X, X_reg,
+                                                                Y, Y_reg,
+                                                                mu, mu_reg,
+                                                                log_sigma, 
+                                                                log_sigma_reg,
+                                                                theta, theta_reg,
+                                                                log_delta, 
+                                                                log_delta_reg)
 
-        grad_X, grad_Y, grad_mu, grad_log_sigma = gradient(curried_prior, X, Y,
-                                                           mu, log_sigma)
+        grad_X, grad_Y, grad_mu, grad_log_sigma,
+        grad_theta, grad_log_delta = gradient(curried_prior, X, Y,
+                                              mu, log_sigma, theta, log_delta)
+
         # These should all have zero gradient
         @test grad_X == zero(grad_X)
         @test grad_Y == zero(grad_Y)
         @test grad_mu == zero(grad_mu)
         @test grad_log_sigma == zero(grad_log_sigma)
-
+        @test grad_theta == zero(grad_theta)
+        @test grad_log_delta == zero(grad_log_delta)
     end
 end
 
@@ -515,7 +524,7 @@ function fit_tests()
     test_log_sigma, test_mu, 
     test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
 
-    fit!(my_model, A; max_epochs=200, capacity=div(M*N,2), lr=0.01, verbose=true)
+    fit!(my_model, A; max_epochs=200, capacity=div(M*N,2), lr=0.01, verbose=false)
 
     # Just put an empty test here to show we run to completion
     @testset "Fit" begin
@@ -594,14 +603,14 @@ end
 
 function main()
    
-    #util_tests()
+    util_tests()
     batch_matrix_tests()
-    #col_block_map_tests()
-    #model_params_tests()
-    #model_core_tests()
-    #adagrad_tests()
-    #fit_tests()
-    #io_tests()
+    col_block_map_tests()
+    model_params_tests()
+    model_core_tests()
+    adagrad_tests()
+    fit_tests()
+    io_tests()
 
 end
 

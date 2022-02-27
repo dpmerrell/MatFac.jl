@@ -23,8 +23,11 @@ mutable struct BatchMatFacModel
 
         ################################
         # Batch parameters
+        # (and their quadratic regularizers)
         theta_values::Vector{<:Dict}
+        theta_reg::Number
         log_delta_values::Vector{<:Dict}
+        log_delta_reg::Number
         sample_batch_ids::Vector{<:Vector{<:KeyType}}
         feature_batch_ids::Vector{<:KeyType}
 
@@ -43,7 +46,9 @@ BMFModel = BatchMatFacModel
 function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
                           sample_batch_dict::Dict{T,Vector{U}}, 
                           feature_batch_ids::Vector{T},
-                          feature_loss_names) where T<:KeyType where U<:KeyType
+                          feature_loss_names;
+                          theta_reg::Number=1.0, 
+                          log_delta_reg::Number=1.0) where T<:KeyType where U<:KeyType
 
     M = size(X_reg[1], 1)
     N = size(Y_reg[1], 1)
@@ -82,7 +87,8 @@ function BatchMatFacModel(X_reg, Y_reg, mu_reg, log_sigma_reg,
 
     return BatchMatFacModel(X, Y, X_reg, Y_reg, 
                             mu, log_sigma, mu_reg, log_sigma_reg,
-                            theta_values, log_delta_values, 
+                            theta_values, theta_reg, 
+                            log_delta_values, log_delta_reg, 
                             sample_batch_ids, feature_batch_ids,
                             feature_loss_names)
 
