@@ -26,32 +26,37 @@ function neg_log_likelihood(X::AbstractMatrix, Y::AbstractMatrix,
 
     A = forward(X, Y, mu, log_sigma, theta, log_delta, feature_link_map)
 
-    return sum(feature_loss_map(A, D, missing_mask, nonmissing))
+    M, N = size(A)
+
+    return sum(feature_loss_map(A, D, missing_mask, nonmissing)) / (M*N)
 end
 
 
 function matrix_nlprior(X::AbstractMatrix, X_reg::Vector{T}) where T <: AbstractMatrix
 
     loss = BMFFloat(0.0f0)
-    k = length(X_reg)
-    for i=1:k
+    K,M = size(X)
+    for i=1:K
         loss += BMFFloat(0.5f0)*dot(X[i,:], X_reg[i] * X[i,:])
     end
-    return loss
+    return loss/(K*M)
 end
 
 
 function ChainRules.rrule(::typeof(matrix_nlprior), X::AbstractMatrix, X_reg::Vector{T}) where T <: AbstractMatrix
     loss = BMFFloat(0.0f0)
     X_grad = zero(X)
-    k = length(X_reg)
-    for i=1:k
+    K,M = size(X)
+    KM_inv = 1/(K*M)
+    for i=1:K
         X_grad[i,:] .= X_reg[i]*X[i,:]
         loss += BMFFloat(0.5f0)*dot(X[i,:], X_grad[i,:])
     end
 
+    loss *= KM_inv
+
     function matrix_nlprior_pullback(loss_bar)
-        return ChainRules.NoTangent(), loss_bar.*X_grad, ChainRulesCore.ZeroTangent()
+        return ChainRules.NoTangent(), loss_bar.*X_grad.*KM_inv, ChainRulesCore.ZeroTangent()
     end
 
     return loss, matrix_nlprior_pullback
@@ -60,12 +65,13 @@ end
 
 function batch_param_prior(param::BatchMatrix{T}, weight::Number) where T <: Number
 
+    N_vec = Int[length(v) for v in param.values]
     means = map(mean, param.values)
     diffs = Vector{Vector{T}}(undef, length(means))
     for i=1:length(diffs)
         diffs[i] = param.values[i] .- means[i]
     end
-    return 0.5 * weight * sum(dot(d,d) for d in diffs)
+    return 0.5 * weight * sum(dot(d,d)/N for (d,N) in zip(diffs,N_vec))
 end
 
 
@@ -73,18 +79,20 @@ function ChainRules.rrule(::typeof(batch_param_prior),
                           param::BatchMatrix{T}, weight::Number) where T <: Number
     
     means = map(mean, param.values)
+    N_vec = Vector{Int}(undef, length(means))
     diffs = Vector{Vector{T}}(undef, length(means))
     for i=1:length(diffs)
         diffs[i] = param.values[i] .- means[i]
+        N_vec[i] = length(param.values[i])
     end
 
     function batch_param_prior_pullback(loss_bar)
         param_bar = zero(param)
-        param_bar.values = diffs
+        param_bar.values = Vector{T}[d ./ N for (d, N) in zip(diffs, N_vec)]
         return ChainRules.NoTangent(), param_bar, ChainRules.NoTangent()
     end
 
-    loss = 0.5 * weight * sum(dot(d,d) for d in diffs)
+    loss = 0.5 * weight * sum(dot(d,d)/N for (d,N) in zip(diffs,N_vec))
     return loss, batch_param_prior_pullback
 end
 
@@ -95,14 +103,17 @@ function neg_log_prior(X::AbstractMatrix, X_reg::Vector{<:AbstractMatrix},
                        log_sigma::AbstractVector, log_sigma_reg::AbstractMatrix,
                        theta::BatchMatrix, theta_reg::Number, 
                        log_delta::BatchMatrix, log_delta_reg::Number)
-    
+
     loss = BMFFloat(0.0f0)
 
     loss += matrix_nlprior(X, X_reg)
     loss += matrix_nlprior(Y, Y_reg)
 
-    loss += BMFFloat(0.5f0) * dot(mu, mu_reg * mu)
-    loss += BMFFloat(0.5f0) * dot(log_sigma, log_sigma_reg * log_sigma)
+    _,N = size(Y)
+    N_inv = 1/N
+
+    loss += BMFFloat(0.5f0) * N_inv * dot(mu, mu_reg * mu) 
+    loss += BMFFloat(0.5f0) * N_inv * dot(log_sigma, log_sigma_reg * log_sigma) 
 
     loss += batch_param_prior(theta, theta_reg)
     loss += batch_param_prior(log_delta, log_delta_reg)
