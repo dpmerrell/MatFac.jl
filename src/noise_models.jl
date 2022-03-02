@@ -149,3 +149,32 @@ LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
                          )
 
 
+###################################
+# Random Sampling
+###################################
+
+function normal_sample(A; scale=1.0)
+    return A .+ (scale .* CUDA.randn(size(A)...))
+end
+
+
+function bernoulli_sample(A; scale=1.0)
+    D = CUDA.rand(size(A)...)
+    D .= (D .<= A)
+    return D
+end
+
+#TODO
+#function poisson_sample(A; scale=1.0)
+#    D = CUDA.rand_poisson(size(A); lambda=scale)
+#end
+
+function noloss_sample(A; scale=1.0)
+    return A
+end
+
+SAMPLE_FUNCTION_MAP = Dict("normal"=> normal_sample,
+                           "logistic"=> bernoulli_sample,
+                           "noloss"=> noloss_sample)
+
+

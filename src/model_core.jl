@@ -17,6 +17,31 @@ function forward(X::AbstractMatrix, Y::AbstractMatrix, mu::AbstractVector, log_s
 end
 
 
+function minibatch_forward(X, Y, mu, log_sigma, theta, log_delta, link_map;
+                           capacity::Integer=Integer(1e8))
+
+    K,M = size(X)
+    N = size(Y,2)
+
+    row_batch_size = div(capacity,N)
+
+    A = CUDA.fill(NaN, M, N)
+    for batch in BatchIter(M,row_batch_size)
+        
+        batch_X = view(X, batch, :)
+        batch_theta = theta[batch,:]
+        batch_log_delta = log_delta[batch,:]
+
+        batch_A = forward(batch_X, Y, mu, log_sigma,
+                          batch_theta, batch_log_delta)
+
+        A[batch,:] .= batch_A
+    end
+
+    return A
+end
+
+
 function neg_log_likelihood(X::AbstractMatrix, Y::AbstractMatrix, 
                             mu::AbstractVector, log_sigma::AbstractVector, 
                             theta::BatchMatrix, log_delta::BatchMatrix,
