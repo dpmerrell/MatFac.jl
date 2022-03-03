@@ -88,7 +88,8 @@ function simulate_data(X_reg, Y_reg, mu_reg, log_sigma_reg,
 
     D = sampler_map(A)
 
-    return D
+    return params, D
+    
 end
 
 
