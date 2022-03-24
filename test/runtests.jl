@@ -387,7 +387,7 @@ function model_core_tests()
                                       feature_loss_map, D, 
                                       missing_mask,
                                       nonmissing)
-        @test isapprox(loss, n_logistic * M * log(2))
+        @test isapprox(loss, (n_logistic * M * log(2))/(M*N))
 
         # Gradient
         new_D = CUDA.zeros(M,N)
@@ -600,17 +600,83 @@ function io_tests()
 
 end
 
+function simulation_tests()
+
+    @testset "Simulation SNR tests" begin
+
+        # XOR noise for binary signal
+        (xor_signal,), (xor_noise,) = BMF.decompose_xor_signal(0.5; snr=10.0)
+        @test isapprox(xor_signal*(1-xor_signal)/(xor_noise * (1-xor_noise)), 10.0)
+        @test isapprox(xor_signal*(1-xor_noise) + (1-xor_signal)*xor_noise, 0.5)
+
+        # backtrack mean/var through logistic function
+        logistic_mean, logistic_var = BMF.decompose_logistic_signal(0.01; input_mtv=10.0)
+        @test isapprox(logistic_mean/logistic_var, 10.0)
+
+        # Backtrack mean/var through exp function 
+        exp_mean, exp_var = BMF.decompose_exp_signal(1.0, 0.0001)
+        @test isapprox(exp_mean, 0.0, atol=1e-3)
+        @test isapprox(exp_var, 0.0001, atol=1e-5)
+
+        # Additive noise for real-valued signal
+        (sig_mean, sig_var),
+        (noise_mean, noise_var) = BMF.decompose_additive_signal(3.14, 2.7; 
+                                                                snr=10.0,noise_mtv=3.0)
+        @test isapprox(sig_var/noise_var, 10.0)
+        @test isapprox(noise_mean^2/noise_var, 3.0)
+        @test isapprox(noise_mean+sig_mean, 3.14)
+        @test isapprox(noise_var+sig_var, 2.7)
+
+        # Multiplicative noise
+        (sig_mean, sig_var), 
+        (noise_mean, noise_var) = BMF.decompose_mult_signal(3.14, 2.7;
+                                                            mean_ratio=2.0,
+                                                            snr=10.0)
+        @test isapprox(sig_var/noise_var, 10.0)
+        @test isapprox(sig_mean/noise_mean, 2.0)
+        @test isapprox(sig_mean*noise_mean, 3.14)
+        @test isapprox(sig_var*noise_var + noise_var*(sig_mean^2) + sig_var*(noise_mean^2), 2.7)
+
+        # Matrix factorization
+        logsigma_moments, 
+        mu_moments,  
+        logdelta_moments, 
+        theta_moments = BMF.decompose_matfac_signal(10.0, 9.0;
+                                                    mu_snr=10.0,
+                                                    delta_snr=10.0,
+                                                    theta_snr=10.0)
+        # Start with mean-0/variance-1 and propagate forward
+        z_mean = 0.0
+        z_var = 1.0
+        sigma_mean, sigma_var = BMF.forward_exp_signal(logsigma_moments...)
+        z_mean, z_var = BMF.forward_mult_signal(z_mean, z_var, sigma_mean, sigma_var)
+        z_mean += mu_moments[1]
+        z_var += mu_moments[2]
+        delta_mean, delta_var = BMF.forward_exp_signal(logdelta_moments...)
+        z_mean, z_var = BMF.forward_mult_signal(z_mean, z_var, delta_mean, delta_var) 
+        z_mean += theta_moments[1]
+        z_var += theta_moments[2]
+
+        @test isapprox(z_mean, 10.0)
+        @test isapprox(z_var, 9.0)
+    end
+
+
+end
+
 
 function main()
    
-    util_tests()
-    batch_matrix_tests()
-    col_block_map_tests()
-    model_params_tests()
-    model_core_tests()
-    adagrad_tests()
-    fit_tests()
-    io_tests()
+    #util_tests()
+    #batch_matrix_tests()
+    #col_block_map_tests()
+    #model_params_tests()
+    #model_core_tests()
+    #adagrad_tests()
+    #fit_tests()
+    #io_tests()
+    simulation_tests()
+
 
 end
 

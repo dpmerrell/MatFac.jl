@@ -18,5 +18,6 @@ include("adagrad_updater.jl")
 include("io.jl")
 include("fit.jl")
 
+include("simulate.jl")
 
 end # module
