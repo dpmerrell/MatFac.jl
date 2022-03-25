@@ -257,75 +257,78 @@ end
 
 function normal_prec(precision::AbstractMatrix; n_samples=1)
 
-    N , _ = size(precision)
+    N = size(precision,1)
     if n_samples > 1
-        z = CUDA.randn(N, n_samples)
+        z = randn(N, n_samples)
     else
-        z = CUDA.randn(N)
+        z = randn(N)
     end
     fac = cholesky(precision)
-    x = fac.UP \ z
+    x = fac.UP\z
     
     return x
 end
 
 
-function sim_X(reg_mats, var)
+function sim_X(reg_mats)
     K = length(reg_mats)
-    return normal_prec(reg_mats[1]; n_samples=K) 
+    return permutedims(normal_prec(reg_mats[1]; n_samples=K)) 
 end
 
 
-function sim_Y(reg_mats, var)
+function sim_Y(reg_mats)
     vecs = [normal_prec(mat) for mat in reg_mats]
-    return hcat(vecs...)
+    return permutedims(hcat(vecs...))
 end
 
 
-function sim_mu(reg_mat, loc, var)
-    return normal_prec(reg_mat)*sqrt(var) + loc
+function sim_col_param(range_vec, moments_vec)
+    vecs = Vector{Float64}[randn(length(r)).*sqrt(mv[2]) .+ mv[1] for (r,mv) in zip(range_vec, moments_vec)]
+    return vcat(vecs...)
 end
 
-
-function sim_log_sigma(reg_mat, loc, var)
-    return normal_prec(reg_mat)*sqrt(var) + loc
-end
-
-
-function sim_theta(N_vec, loc, var)
-    return BMFVec[CUDA.randn(N).*sqrt(var) .+ loc for N in N_vec]
-end
-
-
-function sim_log_delta(N_vec, loc, var)
-    return BMFVec[CUDA.randn(N).*sqrt(var) .+ loc for N in N_vec]
+function sim_batch_param(mbatch_vec, moments_vec)
+    return Vector{Float64}[randn(mb).*sqrt(mv[2]) .+ mv[1] for (mb, mv) in zip(mbatch_vec, moments_vec)]
 end
 
 
 function simulate_params(X_reg, Y_reg,
-                         mu_reg, mu_noise,
-                         log_sigma_reg, log_sigma_noise,
-                         theta, theta_noise,
-                         log_delta, log_delta_noise)
+                         row_batch_ids,
+                         col_batch_ids,
+                         logsigma_moments_vec,
+                         mu_moments_vec,
+                         logdelta_moments_vec,
+                         theta_moments_vec)
   
     K = length(X_reg)
-
     X = sim_X(X_reg)
     Y = sim_Y(Y_reg) ./ sqrt(K)
 
-    mu = sim_mu(mu_reg, mu_noise[1], mu_noise[2])
-    log_sigma = sim_log_sigma(log_sigma_reg, 
-                              log_sigma_noise[1],
-                              log_sigma_noise[2])
-    
-    N_vec = Int[length(v) for v in theta.values]
+    col_ranges = ids_to_ranges(col_batch_ids)
+    log_sigma = sim_col_param(col_ranges, logsigma_moments_vec)
+    mu = sim_col_param(col_ranges, mu_moments_vec)
 
-    theta_copy = zero(theta)
-    theta_copy.values = sim_theta(N_vec)
-    log_delta_copy = zero(log_delta) 
-    log_delta_copy.values = sim_log_delta(N_vec)
+    mbatch_vec = Int64[length(unique(rbv)) for rbv in row_batch_ids]
+    log_delta_values = sim_batch_param(mbatch_vec, logdelta_moments_vec)
+    log_delta_values = Dict{String,Float64}[Dict{String,Float}(zip(unique(rbv),ldv)) 
+                                            for (ldv, rbv) in zip(log_delta_values, row_batch_ids)]
 
-    return ModelParams(X, Y, mu, log_sigma, theta_copy, log_delta_copy)
+    theta_values = sim_batch_param(mbatch_vec, theta_moments_vec)
+    theta_values = Dict{String,Float64}[Dict{String,Float}(zip(unique(rbv),ldv)) 
+                                        for (ldv, rbv) in zip(theta_values, row_batch_ids)]
+
+    # Move everything to GPU
+    X = CUDA.CuArray(X)
+    Y = CUDA.CuArray(Y)
+    log_sigma = CUDA.CuArray(log_sigma)
+    mu = CUDA.CuArray(mu)
+
+    # Assemble BatchMatrix objects
+    log_delta = batch_matrix(log_delta_values, row_batch_ids, col_batch_ids)
+    theta = batch_matrix(theta_values, row_batch_ids, col_batch_ids)
+
+    # Return a ModelParams object
+    return ModelParams(X, Y, mu, log_sigma, theta, log_delta)
 
 end
 
