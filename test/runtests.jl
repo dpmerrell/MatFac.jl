@@ -611,54 +611,136 @@ function simulation_tests()
 
         # backtrack mean/var through logistic function
         logistic_mean, logistic_var = BMF.decompose_logistic_signal(0.01; input_mtv=10.0)
-        @test isapprox(logistic_mean/logistic_var, 10.0)
+        @test isapprox(abs(logistic_mean)/logistic_var, 10.0)
+        @test logistic_var > 0.0
+        test_mean, test_var = BMF.forward_logistic_signal(logistic_mean, logistic_var)
+        @test isapprox(test_mean, 0.01, atol=0.01)
 
         # Backtrack mean/var through exp function 
         exp_mean, exp_var = BMF.decompose_exp_signal(1.0, 0.0001)
         @test isapprox(exp_mean, 0.0, atol=1e-3)
         @test isapprox(exp_var, 0.0001, atol=1e-5)
+        @test exp_var > 0.0
 
         # Additive noise for real-valued signal
         (sig_mean, sig_var),
         (noise_mean, noise_var) = BMF.decompose_additive_signal(3.14, 2.7; 
-                                                                snr=10.0,noise_mtv=3.0)
+                                                                snr=10.0,
+                                                                noise_mean=1.5)
         @test isapprox(sig_var/noise_var, 10.0)
-        @test isapprox(noise_mean^2/noise_var, 3.0)
+        @test isapprox(noise_mean, 1.5)
         @test isapprox(noise_mean+sig_mean, 3.14)
         @test isapprox(noise_var+sig_var, 2.7)
+        @test sig_var > 0.0
+        @test noise_var > 0.0
 
         # Multiplicative noise
         (sig_mean, sig_var), 
-        (noise_mean, noise_var) = BMF.decompose_mult_signal(3.14, 2.7;
-                                                            mean_ratio=2.0,
+        (noise_mean, noise_var) = BMF.decompose_mult_signal(12.34, 32.1;
+                                                            noise_mean=1.0,
                                                             snr=10.0)
         @test isapprox(sig_var/noise_var, 10.0)
-        @test isapprox(sig_mean/noise_mean, 2.0)
-        @test isapprox(sig_mean*noise_mean, 3.14)
-        @test isapprox(sig_var*noise_var + noise_var*(sig_mean^2) + sig_var*(noise_mean^2), 2.7)
+        @test isapprox(noise_mean, 1.0)
+        @test isapprox(sig_mean*noise_mean, 12.34)
+        @test isapprox(sig_var*noise_var + noise_var*(sig_mean^2) + sig_var*(noise_mean^2), 32.1)
+        @test sig_var > 0.0
+        @test noise_var > 0.0
 
         # Matrix factorization
         logsigma_moments, 
         mu_moments,  
         logdelta_moments, 
-        theta_moments = BMF.decompose_matfac_signal(10.0, 9.0;
-                                                    mu_snr=10.0,
+        theta_moments = BMF.decompose_matfac_signal(-3.14, 9.0;
+                                                    sigma_snr=20.0,
+                                                    mu_snr=1000.0,
                                                     delta_snr=10.0,
                                                     theta_snr=10.0)
-        # Start with mean-0/variance-1 and propagate forward
-        z_mean = 0.0
-        z_var = 1.0
-        sigma_mean, sigma_var = BMF.forward_exp_signal(logsigma_moments...)
-        z_mean, z_var = BMF.forward_mult_signal(z_mean, z_var, sigma_mean, sigma_var)
-        z_mean += mu_moments[1]
-        z_var += mu_moments[2]
-        delta_mean, delta_var = BMF.forward_exp_signal(logdelta_moments...)
-        z_mean, z_var = BMF.forward_mult_signal(z_mean, z_var, delta_mean, delta_var) 
-        z_mean += theta_moments[1]
-        z_var += theta_moments[2]
-
-        @test isapprox(z_mean, 10.0)
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  logsigma_moments, mu_moments,
+                                                  logdelta_moments, theta_moments)
+        @test isapprox(z_mean, -3.14)
         @test isapprox(z_var, 9.0)
+
+       
+        # Matrix factorization -- normal data
+        logsigma_moments, mu_moments,  
+        logdelta_moments, theta_moments, 
+        #sample_moments = BMF.decompose_normal_data_signal(3.14, 5.0, 
+        sample_moments = BMF.decompose_normal_data_signal(12.34, 32.1; 
+                                                          mu_snr=100.0,
+                                                          delta_snr=10.0,
+                                                          theta_snr=10.0,
+                                                          sample_snr=10.0,
+                                                          )
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  logsigma_moments, mu_moments,
+                                                  logdelta_moments, theta_moments)
+        z_mean += sample_moments[1]
+        z_var += sample_moments[2]
+        #@test isapprox(z_mean, 3.14)
+        #@test isapprox(z_var, 5.0)
+        @test isapprox(z_mean, 12.34)
+        @test isapprox(z_var, 32.1)
+
+        # Matrix factorization -- bernoulli data
+        logsigma_moments, mu_moments,  
+        logdelta_moments, theta_moments, 
+        sample_moments = BMF.decompose_bernoulli_data_signal(0.00001;
+                                  mu_snr=100.0,
+                                  delta_snr=10.0,
+                                  theta_snr=10.0,
+                                  logistic_mtv=10.0,
+                                  sample_snr=100.0,
+                                  )
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  logsigma_moments, mu_moments,
+                                                  logdelta_moments, theta_moments)
+        logistic_mean, logistic_var = BMF.forward_logistic_signal(z_mean, z_var)
+        (data_mean, ) = BMF.forward_xor_signal(logistic_mean, sample_moments)
+        
+        # This will only hold in a *very* rough sense.
+        @test isapprox(data_mean, 0.00001, atol=0.001)
+
+        # Compute signal contributions for 
+        # a dataset with column batches
+        data_moments = [(3.14, 2.7), (0.001,), (12.34, 32.1)]
+        feature_batch_ids = ["cat", "cat", "dog", "dog", "dog", "fish"]
+        feature_losses = ["normal", "normal", "logistic", "logistic", "logistic", "normal"]
+        col_batch_characteristics = BMF.decompose_all_data_signal(data_moments,
+                                                                  feature_batch_ids,
+                                                                  feature_losses;
+                                                                  mu_snr=100.0,
+                                                                  delta_snr=10.0,
+                                                                  theta_snr=10.0,
+                                                                  logistic_mtv=7.0,
+                                                                  sample_snr=10.0)
+        cat_char, dog_char, fish_char = col_batch_characteristics
+
+        # "cat" batch
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  cat_char[1], cat_char[2],
+                                                  cat_char[3], cat_char[4])
+        z_mean += cat_char[5][1]
+        z_var += cat_char[5][2]
+        @test isapprox(z_mean, data_moments[1][1])
+        @test isapprox(z_var, data_moments[1][2])
+
+        # "dog" batch
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  dog_char[1], dog_char[2],
+                                                  dog_char[3], dog_char[4])
+        logistic_mean, logistic_var = BMF.forward_logistic_signal(z_mean, z_var)
+        (data_mean,) = BMF.forward_xor_signal(logistic_mean, sample_moments)
+        @test isapprox(data_mean, data_moments[2][1], atol=0.002)
+        
+        # "fish" batch
+        z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
+                                                  fish_char[1], fish_char[2],
+                                                  fish_char[3], fish_char[4])
+        z_mean += fish_char[5][1]
+        z_var += fish_char[5][2]
+        @test isapprox(z_mean, data_moments[3][1])
+        @test isapprox(z_var, data_moments[3][2])
     end
 
 

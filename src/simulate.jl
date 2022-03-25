@@ -19,15 +19,31 @@ function decompose_xor_signal(output_mean;
     return (signal_mean,), (noise_mean,)
 end
 
+function forward_xor_signal(input_mean, noise_moments)
+    p = input_mean
+    q = noise_moments[1]
+    output_mean = p*(1-q) + q*(1-p)
+    return output_mean
+end
 
+
+# Only valid for small output mean;
+# relies on an exponential approximation
 function decompose_logistic_signal(output_mean;
                                    input_mtv=10.0)
 
     input_mean = log(output_mean) * input_mtv / (input_mtv + 0.5)
-    input_var = input_mean / input_mtv
+    input_var = abs(input_mean) / input_mtv
 
     return (input_mean, input_var)
 end
+
+function forward_logistic_signal(input_mean, input_var)
+    output_mean = exp(input_mean + 0.5*input_var)
+    output_var = (exp(input_var) - 1.0)*exp(2.0*input_mean + input_var)
+    return output_mean, output_var
+end
+
 
 # log-normality assumptions
 function decompose_exp_signal(output_mean, output_var)
@@ -49,32 +65,23 @@ end
 
 function decompose_additive_signal(output_mean, output_var;
                                    snr=10.0,
-                                   noise_mtv=0.0)
+                                   noise_mean=0.0)
 
     signal_var = output_var * snr / (1 + snr)
     noise_var = output_var - signal_var
-    noise_mu = sqrt(noise_mtv * noise_var)
-    signal_mu = output_mean - noise_mu
-    return (signal_mu, signal_var), (noise_mu, noise_var)
+    signal_mu = output_mean - noise_mean
+    return (signal_mu, signal_var), (noise_mean, noise_var)
 end
 
 
 function decompose_mult_signal(output_mean, output_var;
-                               mean_ratio=10.0, 
+                               noise_mean=1.0, 
                                snr=10.0)
 
-    #signal_var = sqrt((snr/(1 + noise_mtv))*(output_var - output_mean*output_mean/noise_mtv))
-    #noise_var = signal_var / snr
-    #noise_mean = sqrt(noise_mtv * noise_var)
-    #signal_mean = output_mean/noise_mean
-
-    signal_mean = sqrt(mean_ratio * output_mean + 1e-9)
-    noise_mean = signal_mean / mean_ratio
-
+    signal_mean = output_mean / noise_mean
     b = noise_mean*noise_mean + signal_mean*signal_mean/snr
-    
-    noise_var = (sqrt(b*b + 4.0*output_var/snr) - b)*0.5
-    signal_var = noise_var*snr 
+    noise_var = (-b + sqrt(b*b + 4.0*output_var/snr))*0.5
+    signal_var = noise_var*snr
 
     return (signal_mean, signal_var), (noise_mean, noise_var)
 end
@@ -89,38 +96,44 @@ end
 
 
 function decompose_matfac_signal(out_mean, out_var;
+                                 sigma_snr=20.0,
                                  mu_snr=10.0,
                                  delta_snr=10.0,
-                                 theta_snr=10.0
-                                 )
+                                 theta_snr=10.0)
+
     notheta_signal,
     theta_noise = decompose_additive_signal(out_mean, out_var;
                                             snr=theta_snr,
-                                            noise_mtv=0.0) # noise is zero-mean
-
+                                            noise_mean=0.0) # noise is zero-mean
+    println(string("NOTHETA_SIGNAL", notheta_signal))
     nodelta_signal,
     delta_noise = decompose_mult_signal(notheta_signal[1], 
                                         notheta_signal[2];
-                                        mean_ratio=notheta_signal[1], # want E[delta]==1
+                                        noise_mean=1.0, # want E[delta]==1
                                         snr=delta_snr) # "noise" is exp-distributed
+    println(string("NODELTA_SIGNAL", nodelta_signal))
 
     logdelta_noise = decompose_exp_signal(delta_noise[1],
                                           delta_noise[2])
 
     # set the mean-to-var ratio s.t. input signal has mean zero
-    mu_noise_mtv = (mu_snr+1)*nodelta_signal[1]^2 / nodelta_signal[2]
     nomu_signal,
     mu_noise = decompose_additive_signal(nodelta_signal[1],
                                          nodelta_signal[2]; 
                                          snr=mu_snr,
-                                         noise_mtv=mu_noise_mtv) # noise is zero-mean
-
+                                         noise_mean=nodelta_signal[1])
+    println(string("NOMU_SIGNAL", nomu_signal))
+                                         # (Remaining signal should have zero-mean)
+    
+    sigma_snr = sigma_snr/nomu_signal[2]
+    sigma_mean = sqrt(nomu_signal[2] - 1/sigma_snr)
     nosigma_signal,
     sigma_noise = decompose_mult_signal(nomu_signal[1], 
                                         nomu_signal[2];
-                                        mean_ratio=1, # want Var[XY]=1 
-                                        snr=1/nomu_signal[2]) # 
-   
+                                        noise_mean=sigma_mean,
+                                        snr=sigma_snr) # 
+    println(string("NOSIGMA_SIGNAL", nosigma_signal))
+    println("")
     logsigma_noise = decompose_exp_signal(sigma_noise[1],
                                           sigma_noise[2])
 
@@ -130,7 +143,23 @@ function decompose_matfac_signal(out_mean, out_var;
 end
 
 
+function forward_matfac_signal(z_mean, z_var,
+                               logsigma_moments, mu_moments,
+                               logdelta_moments, theta_moments)
+    sigma_mean, sigma_var = forward_exp_signal(logsigma_moments...)
+    z_mean, z_var = forward_mult_signal(z_mean, z_var, sigma_mean, sigma_var)
+    z_mean += mu_moments[1]
+    z_var += mu_moments[2]
+    delta_mean, delta_var = forward_exp_signal(logdelta_moments...)
+    z_mean, z_var = forward_mult_signal(z_mean, z_var, delta_mean, delta_var) 
+    z_mean += theta_moments[1]
+    z_var += theta_moments[2]
+    return z_mean, z_var
+end
+
+
 function decompose_normal_data_signal(data_mean, data_var;
+                               sigma_snr=10.0,
                                mu_snr=10.0,
                                delta_snr=10.0,
                                theta_snr=10.0,
@@ -138,13 +167,16 @@ function decompose_normal_data_signal(data_mean, data_var;
                                )
 
     nosample_signal,
-    sample_noise = decompose_additive_signal(data_var, sample_snr)
+    sample_noise = decompose_additive_signal(data_mean, data_var;
+                                             snr=sample_snr,
+                                             noise_mean=0.0) # Noise has zero-mean
 
     logsigma_noise,
     mu_noise, 
     logdelta_noise, 
     theta_noise = decompose_matfac_signal(nosample_signal[1], 
                                          nosample_signal[2];
+                                         sigma_snr=sigma_snr,
                                          theta_snr=theta_snr,
                                          delta_snr=delta_snr,
                                          mu_snr=mu_snr,
@@ -157,6 +189,7 @@ end
 
 
 function decompose_bernoulli_data_signal(data_mean;
+                                  sigma_snr=10.0,
                                   mu_snr=10.0,
                                   delta_snr=10.0,
                                   theta_snr=10.0,
@@ -167,18 +200,17 @@ function decompose_bernoulli_data_signal(data_mean;
     nosample_signal,
     sample_noise = decompose_xor_signal(data_mean;
                                         snr=sample_snr)
-    
-    input_signal = decompose_logistic_signal(nosample_signal[1];
-                                             input_mtv=logistic_mtv)
-   
-    logsigma_noise
+    z_moments = decompose_logistic_signal(nosample_signal[1];
+                                          input_mtv=logistic_mtv)
+    logsigma_noise,
     mu_noise, 
     logdelta_noise, 
-    theta_noise = decompose_matfac_signal(input_var, input_mean;
+    theta_noise = decompose_matfac_signal(z_moments[1], 
+                                          z_moments[2];
+                                          sigma_snr=sigma_snr,
                                           theta_snr=theta_snr,
                                           delta_snr=delta_snr,
-                                          mu_snr=mu_snr,
-                                          )
+                                          mu_snr=mu_snr)
 
     return logsigma_noise, mu_noise,  
            logdelta_noise, theta_noise, 
@@ -188,7 +220,6 @@ end
 
 function decompose_all_data_signal(data_moments,
                                    feature_batch_ids,
-                                   sample_batch_ids,
                                    feature_losses;
                                    mu_snr=10.0,
                                    delta_snr=10.0,
@@ -196,8 +227,8 @@ function decompose_all_data_signal(data_moments,
                                    logistic_mtv=10.0,
                                    sample_snr=10.0)
 
-    unq_col_batches = unique(col_batch_ids)
-    col_ranges = ids_to_ranges(col_batch_ids)    
+    unq_col_batches = unique(feature_batch_ids)
+    col_ranges = ids_to_ranges(feature_batch_ids)    
     batch_losses = [unique(feature_losses[c_rng])[1] for c_rng in col_ranges]
   
     sig_decomp_map = Dict("normal"=>m -> decompose_normal_data_signal(m[1],m[2],
@@ -215,7 +246,7 @@ function decompose_all_data_signal(data_moments,
                          )
 
     # Compute variance contributions for each column batch
-    batch_characteristics = [sig_decomp_map[b_l](m) for (m, b_l) in zip(col_batch_moments, batch_losses)]
+    batch_characteristics = [sig_decomp_map[b_l](m) for (m, b_l) in zip(data_moments, batch_losses)]
 
     return batch_characteristics
 end
