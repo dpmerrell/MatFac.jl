@@ -748,12 +748,13 @@ function simulation_tests()
         n_col_batches = 2
         n_batches = 10
 
+        noise_models = repeat(["logistic","normal"],inner=div(N,n_col_batches))
         col_batch_ids = repeat([string("colbatch_",i) for i=1:n_col_batches],inner=div(N,n_col_batches))
         row_batch_ids = Vector{String}[vcat([repeat([string("rowbatch_",i,"_",j) for i=1:n_batches],
                                                     inner=div(M,n_batches)
-                                                   ) for j=1:n_col_batches
+                                                   ) 
                                             ]...
-                                           )
+                                           ) for j=1:n_col_batches
                                       ]
 
         Q_X = sprandn(M,M, 0.0005)
@@ -766,6 +767,8 @@ function simulation_tests()
 
         logsigma_moments_vec = [(0.0, 0.25), (12.3, 32.1)]
         mu_moments_vec = [(-5.0, 0.25), (20.0, 50.0)]
+        logdelta_moments_vec = [(0.0, 0.25), (12.3, 32.1)]
+        theta_moments_vec = [(1.23, 0.25), (-1.23, 32.1)]
 
         # Generate normal-distributed values, parameterized
         # by precision matrix
@@ -785,7 +788,12 @@ function simulation_tests()
         @test size(params.X) == (K,M)
         @test size(params.Y) == (K,N)
         @test size(params.mu) == (N,)
-        @test size(params.sigma) == (N,)
+        @test size(params.log_sigma) == (N,)
+
+        D = BMF.simulate_data(params, noise_models)
+        @test size(D) == (M,N)
+
+
     end
 
 end
@@ -793,16 +801,15 @@ end
 
 function main()
    
-    #util_tests()
-    #batch_matrix_tests()
-    #col_block_map_tests()
-    #model_params_tests()
-    #model_core_tests()
-    #adagrad_tests()
-    #fit_tests()
-    #io_tests()
+    util_tests()
+    batch_matrix_tests()
+    col_block_map_tests()
+    model_params_tests()
+    model_core_tests()
+    adagrad_tests()
+    fit_tests()
+    io_tests()
     simulation_tests()
-
 
 end
 

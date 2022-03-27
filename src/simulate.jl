@@ -105,13 +105,11 @@ function decompose_matfac_signal(out_mean, out_var;
     theta_noise = decompose_additive_signal(out_mean, out_var;
                                             snr=theta_snr,
                                             noise_mean=0.0) # noise is zero-mean
-    println(string("NOTHETA_SIGNAL", notheta_signal))
     nodelta_signal,
     delta_noise = decompose_mult_signal(notheta_signal[1], 
                                         notheta_signal[2];
                                         noise_mean=1.0, # want E[delta]==1
                                         snr=delta_snr) # "noise" is exp-distributed
-    println(string("NODELTA_SIGNAL", nodelta_signal))
 
     logdelta_noise = decompose_exp_signal(delta_noise[1],
                                           delta_noise[2])
@@ -122,7 +120,6 @@ function decompose_matfac_signal(out_mean, out_var;
                                          nodelta_signal[2]; 
                                          snr=mu_snr,
                                          noise_mean=nodelta_signal[1])
-    println(string("NOMU_SIGNAL", nomu_signal))
                                          # (Remaining signal should have zero-mean)
     
     sigma_snr = sigma_snr/nomu_signal[2]
@@ -132,8 +129,6 @@ function decompose_matfac_signal(out_mean, out_var;
                                         nomu_signal[2];
                                         noise_mean=sigma_mean,
                                         snr=sigma_snr) # 
-    println(string("NOSIGMA_SIGNAL", nosigma_signal))
-    println("")
     logsigma_noise = decompose_exp_signal(sigma_noise[1],
                                           sigma_noise[2])
 
@@ -246,9 +241,9 @@ function decompose_all_data_signal(data_moments,
                          )
 
     # Compute variance contributions for each column batch
-    batch_characteristics = [sig_decomp_map[b_l](m) for (m, b_l) in zip(data_moments, batch_losses)]
+    batch_moments = [sig_decomp_map[b_l](m) for (m, b_l) in zip(data_moments, batch_losses)]
 
-    return batch_characteristics
+    return batch_moments
 end
 
 #######################################
@@ -310,11 +305,11 @@ function simulate_params(X_reg, Y_reg,
 
     mbatch_vec = Int64[length(unique(rbv)) for rbv in row_batch_ids]
     log_delta_values = sim_batch_param(mbatch_vec, logdelta_moments_vec)
-    log_delta_values = Dict{String,Float64}[Dict{String,Float}(zip(unique(rbv),ldv)) 
+    log_delta_values = Dict{String,Float64}[Dict{String,Float64}(zip(unique(rbv),ldv)) 
                                             for (ldv, rbv) in zip(log_delta_values, row_batch_ids)]
 
     theta_values = sim_batch_param(mbatch_vec, theta_moments_vec)
-    theta_values = Dict{String,Float64}[Dict{String,Float}(zip(unique(rbv),ldv)) 
+    theta_values = Dict{String,Float64}[Dict{String,Float64}(zip(unique(rbv),ldv)) 
                                         for (ldv, rbv) in zip(theta_values, row_batch_ids)]
 
     # Move everything to GPU
@@ -342,8 +337,8 @@ function simulate_data(params, noise_models)
     link_map = ColBlockMap(Function[LINK_FUNCTION_MAP[nm] for nm in unq_nm],
                            nm_ranges)
 
-    A = batch_forward(params.X, params.Y, params.mu, params.log_sigma,
-                      params.theta, params.log_delta, link_map)
+    A = minibatch_forward(params.X, params.Y, params.mu, params.log_sigma,
+                          params.theta, params.log_delta, link_map)
 
     sampler_map = ColBlockMap(Function[SAMPLE_FUNCTION_MAP[nm] for nm in unq_nm],
                               nm_ranges)
@@ -354,43 +349,6 @@ function simulate_data(params, noise_models)
     
 end
 
-
-function full_simulation(X_reg, Y_reg,
-                         col_batch_moments,
-                         feature_batch_ids,
-                         sample_batch_ids,
-                         feature_noise_models;
-                         mu_snr=10.0,
-                         delta_snr=10.0,
-                         theta_snr=10.0,
-                         logistic_mtv=10.0,
-                         sample_snr=10.0)
-
-
-    # Compute the contributions of different model
-    # parameters to the data's overall means and variances
-    batch_var_contribs = decompose_all_data_signal(col_batch_moments,
-                                                   feature_batch_ids,
-                                                   sample_batch_ids,
-                                                   feature_noise_models;
-                                                   mu_snr=mu_snr,
-                                                   delta_snr=delta_snr,
-                                                   theta_snr=theta_snr,
-                                                   logistic_mtv=logistic_mtv,
-                                                   sample_snr=sample_snr)
-
-    # Simulate model parameters
-    sim_model_params = simulate_params(X_reg, Y_reg, 
-                                       feature_batch_ids,
-                                       sample_batch_ids,
-                                       batch_var_contribs)
-
-    # Simulate the data from the parameters
-    D = simulate_data(sim_model_params, feature_noise_models)
-
-    # Return the parameters and data
-    return sim_model_params, D
-end
 
 
 

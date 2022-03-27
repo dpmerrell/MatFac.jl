@@ -28,12 +28,12 @@ function minibatch_forward(X, Y, mu, log_sigma, theta, log_delta, link_map;
     A = CUDA.fill(NaN, M, N)
     for batch in BatchIter(M,row_batch_size)
         
-        batch_X = view(X, batch, :)
-        batch_theta = theta[batch,:]
-        batch_log_delta = log_delta[batch,:]
+        batch_X = view(X, :, batch)
+        batch_theta = theta[batch,1:N]
+        batch_log_delta = log_delta[batch,1:N]
 
         batch_A = forward(batch_X, Y, mu, log_sigma,
-                          batch_theta, batch_log_delta)
+                          batch_theta, batch_log_delta, link_map)
 
         A[batch,:] .= batch_A
     end
