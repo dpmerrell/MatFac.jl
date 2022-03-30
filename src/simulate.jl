@@ -27,20 +27,27 @@ function forward_xor_signal(input_mean, noise_moments)
 end
 
 
-# Only valid for small output mean;
-# relies on an exponential approximation
-function decompose_logistic_signal(output_mean;
-                                   input_mtv=10.0)
+# relies on second-order Taylor approximation 
+function decompose_logistic_signal(output_mean, output_var)
 
-    input_mean = log(output_mean) * input_mtv / (input_mtv + 0.5)
-    input_var = abs(input_mean) / input_mtv
+    func = log(output_mean/(1 - output_mean))
+    first_deriv = 1/(output_mean*(1 - output_mean))
+    second_deriv = (2.0*output_mean - 1.0)*first_deriv*first_deriv
+
+    input_mean = func + 0.5*second_deriv*output_var
+    input_var = first_deriv*first_deriv*output_var
 
     return (input_mean, input_var)
 end
 
+# relies on second-order Taylor approximation
 function forward_logistic_signal(input_mean, input_var)
-    output_mean = exp(input_mean + 0.5*input_var)
-    output_var = (exp(input_var) - 1.0)*exp(2.0*input_mean + input_var)
+    func = 1/(1 + exp(-input_mean))
+    first_deriv = func*(1-func)
+    second_deriv = first_deriv*(1 - 2*func)
+
+    output_mean = func + 0.5*second_deriv*input_var
+    output_var = first_deriv*first_deriv*input_var
     return output_mean, output_var
 end
 
@@ -188,15 +195,15 @@ function decompose_bernoulli_data_signal(data_mean;
                                   mu_snr=10.0,
                                   delta_snr=10.0,
                                   theta_snr=10.0,
-                                  logistic_mtv=10.0,
+                                  logistic_snr=1.0,
                                   sample_snr=10.0,
                                   )
         
     nosample_signal,
     sample_noise = decompose_xor_signal(data_mean;
                                         snr=sample_snr)
-    z_moments = decompose_logistic_signal(nosample_signal[1];
-                                          input_mtv=logistic_mtv)
+    z_moments = decompose_logistic_signal(nosample_signal[1],
+                                          nosample_signal[1]*(1.0 - nosample_signal[1])/logistic_snr)
     logsigma_noise,
     mu_noise, 
     logdelta_noise, 
@@ -219,7 +226,7 @@ function decompose_all_data_signal(data_moments,
                                    mu_snr=10.0,
                                    delta_snr=10.0,
                                    theta_snr=10.0,
-                                   logistic_mtv=10.0,
+                                   logistic_snr=1.0,
                                    sample_snr=10.0)
 
     unq_col_batches = unique(feature_batch_ids)
@@ -235,7 +242,7 @@ function decompose_all_data_signal(data_moments,
                                                                            mu_snr=mu_snr,
                                                                            delta_snr=delta_snr,
                                                                            theta_snr=theta_snr,
-                                                                           logistic_mtv=logistic_mtv,
+                                                                           logistic_snr=logistic_snr,
                                                                            sample_snr=sample_snr),
                           "noloss"=>m -> decompose_normal_data_signal(0,1)
                          )
