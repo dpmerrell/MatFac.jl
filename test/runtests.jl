@@ -194,7 +194,7 @@ end
 
 
 
-function simulate_data(M, N, K, row_batches, n_logistic)
+function simulate_test_data(M, N, K, row_batches, n_logistic)
     
     X = BMF.BMFMat(CUDA.randn(K, M) .* 0.01)
     Y = BMF.BMFMat(CUDA.randn(K, N) .* 0.01)
@@ -522,7 +522,7 @@ function fit_tests()
 
     test_X, test_Y, 
     test_log_sigma, test_mu, 
-    test_log_delta, test_theta, A = simulate_data(M, N, K, sample_batch_ids, n_logistic)
+    test_log_delta, test_theta, A = simulate_test_data(M, N, K, sample_batch_ids, n_logistic)
 
     fit!(my_model, A; max_epochs=200, capacity=div(M*N,2), lr=0.01, verbose=false)
 
@@ -686,7 +686,7 @@ function simulation_tests()
                                   mu_snr=100.0,
                                   delta_snr=10.0,
                                   theta_snr=10.0,
-                                  logistic_snr=1000.0,
+                                  logistic_snr=1.0,
                                   sample_snr=10.0,
                                   )
         z_mean, z_var = BMF.forward_matfac_signal(0.0, 1.0,
@@ -798,6 +798,38 @@ function simulation_tests()
 
 end
 
+function ternary_tests()
+
+    M = 20
+    N = 10
+
+    losses = repeat(["ternary"], N)
+    data = CUDA.CuArray(rand([-1, 0, 1], M,N))
+    A = CUDA.zeros(M,N)
+
+    link_crm = BMF.ColBlockMap([BMF.logistic_link], losses)
+    loss_crm = BMF.ColBlockAgg([BMF.ternary_loss], losses)
+
+    nonmissing = CUDA.ones(M,N)
+    missing_mask = CUDA.zeros(M,N)
+
+    @testset "Ternary loss" begin
+
+        Z = link_crm(A)
+        @test all(Z .== 0.5)
+
+        loss = loss_crm(Z, data, missing_mask, nonmissing)
+        @test all(isapprox.(loss, log(2)))
+       
+        curried_fn = x->sum(loss_crm(x, data, missing_mask, nonmissing))
+        grad = gradient(curried_fn, Z)[1]
+
+        zerograd_idx = isapprox.(grad, 0.0)
+        zerodata_idx = isapprox.(data, 0.0)
+
+        @test all(zerograd_idx .== zerodata_idx)
+    end
+end
 
 function main()
    
@@ -809,7 +841,8 @@ function main()
     #adagrad_tests()
     #fit_tests()
     #io_tests()
-    simulation_tests()
+    #simulation_tests()
+    ternary_tests()
 
 end
 

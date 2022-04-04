@@ -40,8 +40,9 @@ end
 
 LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
                          "logistic"=>logistic_link,
+                         "ternary"=>logistic_link,
                          "poisson"=>poisson_link,
-                         "noloss"=>noloss_link,
+                         "noloss"=>noloss_link
                         )
 
 
@@ -49,9 +50,8 @@ LINK_FUNCTION_MAP = Dict("normal"=>quad_link,
 # LOSS FUNCTIONS
 ####################################
 
-function quad_loss(A::AbstractArray, D::AbstractArray, 
-                   missing_mask::AbstractArray,
-                   nonmissing::AbstractArray)
+function quad_loss(A::AbstractArray, D::AbstractArray, missing_mask,
+                   nonmissing)
     return BMFFloat(0.5).*(A .- D).^2
 end
 
@@ -71,9 +71,8 @@ function ChainRules.rrule(::typeof(quad_loss), A, D, missing_mask,
 end
 
 
-function logistic_loss(A::AbstractArray, D::AbstractArray,
-                       missing_mask::AbstractArray,
-                       nonmissing::AbstractArray)
+function logistic_loss(A::AbstractArray, D::AbstractArray, missing_mask,
+                       nonmissing)
     loss = -D .* log.(A) .- (1 .- D) .* log.( 1 .- A)
     return loss
 end
@@ -85,7 +84,7 @@ function ChainRules.rrule(::typeof(logistic_loss), A, D, missing_mask,
     A .*= nonmissing
     A .+= missing_mask
     
-    loss = logistic_loss(A,D,missing_mask,nonmissing)
+    loss = logistic_loss(A,D, missing_mask, nonmissing)
 
     function logistic_loss_pullback(loss_bar)
         A_bar = loss_bar .* (-D./A .+ (1 .- D)./(1 .- A))
@@ -97,9 +96,35 @@ function ChainRules.rrule(::typeof(logistic_loss), A, D, missing_mask,
 end
 
 
-function poisson_loss(A::AbstractArray, D::AbstractArray, 
-                      missing_mask::AbstractArray,
-                      nonmissing::AbstractArray)
+function ternary_loss(A::AbstractArray, D::AbstractArray, missing_mask, nonmissing)
+
+    loss = -0.5f0.*(D .+ 1).*log.(A) .- 0.5f0.*(1 .- D).*log.(1 .- A)
+    return loss 
+end
+
+
+function ChainRules.rrule(::typeof(ternary_loss), A, D, missing_mask,
+                          nonmissing)
+    A .*= nonmissing
+    A .+= missing_mask
+
+    # Data with value 0 should not 
+    # contribute to the loss
+    A[D .== 0] .= 0.5f0
+
+    loss = ternary_loss(A, D, missing_mask, nonmissing)
+
+    function ternary_loss_pullback(loss_bar)
+        A_bar = loss_bar .* (-0.5f0.*(D .+ 1)./A .+ 0.5f0.*(1 .- D)./(1 .- A))
+        return ChainRules.NoTangent(), A_bar, ChainRules.NoTangent(),
+                                              ChainRules.NoTangent(),
+                                              ChainRules.NoTangent()
+    end
+    return loss, ternary_loss_pullback
+end
+
+
+function poisson_loss(A::AbstractArray, D::AbstractArray, missing_mask, nonmissing) 
     return A .- D.*log.(A)
 end
 
@@ -110,7 +135,7 @@ function ChainRules.rrule(::typeof(poisson_loss), A, D, missing_mask,
     A .*= nonmissing
     A .+= missing_mask
 
-    loss = poisson_loss(A, D, missing_mask, nonmissing)
+    loss = poisson_loss(A, D)
 
     function poisson_loss_pullback(loss_bar)
         A_bar = loss_bar .* (1 .- D ./ A)
@@ -144,6 +169,7 @@ end
 
 LOSS_FUNCTION_MAP = Dict("normal"=>quad_loss,
                          "logistic"=>logistic_loss,
+                         "ternary"=>ternary_loss,
                          "poisson"=>poisson_loss,
                          "noloss"=>noloss_loss
                          )
@@ -164,6 +190,12 @@ function bernoulli_sample(A; scale=1.0)
     return D
 end
 
+function ternary_sample(A; scale=0.01)
+    X = (CUDA.rand(size(A)...) .<= A)
+    Y = 2.0f0.*(CUDA.rand(size(A)...) .<= scale) .- 1
+    return X .* Y
+end
+
 #TODO
 #function poisson_sample(A; scale=1.0)
 #    D = CUDA.rand_poisson(size(A); lambda=scale)
@@ -175,6 +207,7 @@ end
 
 SAMPLE_FUNCTION_MAP = Dict("normal"=> normal_sample,
                            "logistic"=> bernoulli_sample,
+                           "ternary"=> ternary_sample,
                            "noloss"=> noloss_sample)
 
 

@@ -202,8 +202,9 @@ function decompose_bernoulli_data_signal(data_mean;
     nosample_signal,
     sample_noise = decompose_xor_signal(data_mean;
                                         snr=sample_snr)
+    logistic_deriv = nosample_signal[1]*(1.0-nosample_signal[1])
     z_moments = decompose_logistic_signal(nosample_signal[1],
-                                          nosample_signal[1]*(1.0 - nosample_signal[1])/logistic_snr)
+                                          logistic_deriv*logistic_deriv/logistic_snr)
     logsigma_noise,
     mu_noise, 
     logdelta_noise, 
