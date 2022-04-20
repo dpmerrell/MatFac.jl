@@ -2,15 +2,12 @@
 import Base: view
 
 mutable struct ColMap
-    col_ranges::Vector{UnitRange}
-    funcs::Vector # Each object in "funcs"
+    col_ranges::Tuple
+    funcs::Tuple # Each object in "funcs"
                   # must (1) be callable and
                   # (2) have a `view` method.
                   # In general, they may contain trainable parameters.
 end
-
-
-Flux.trainable(cm::ColMap) = (cm.funcs,)
 
 
 function view(cm::ColMap, idx)
@@ -24,30 +21,76 @@ function view(cm::ColMap, idx)
         push!(newfunc_views, view(f, sh_rng))
     end
 
-    return ColMap(shifted_new_ranges, newfunc_views)
+    return ColMap(Tuple(shifted_new_ranges), 
+                  Tuple(newfunc_views))
 end
 
+
+#############################################
+# One argument
 
 function (cm::ColMap)(A::AbstractMatrix)
-    
-    result = zero(A)
-    for (rng, f) in zip(cm.col_ranges, cm.funcs)
-        result[:,rng] .= f(A[:,rng])
-    end
-    return result
+    return hcat(map((f,rng)->f(A[:,rng]), cm.funcs, cm.col_ranges)...)
 end
 
+function ChainRules.rrule(cm::ColMap, A)
 
-function ChainRules.rrule(cm::typeof(ColMap), A)
-
-    result = zero(A)
+    pbs = []
+    result = similar(A)
+    for (rng, f) in zip(cm.col_ranges, cm.funcs)
+        res, pb = ChainRules.rrule(f, A[:,rng])
+        result[:,rng] .= res
+        push!(pbs, pb)
+    end
 
     function colmap_pullback(result_bar)
+        A_bar = similar(A)
+        funcs_bar = []
+        for (rng, pb) in zip(cm.col_ranges, pbs)
+            fb, Ab = pb(result_bar[:,rng])
+            A_bar[:,rng] .= Ab
+            push!(funcs_bar, fb)
+        end
+
+        cm_bar = Tangent{ColMap}(funcs=Tuple(funcs_bar))
         return cm_bar, A_bar
     end
 
     return result, colmap_pullback
 end
 
+
+#####################################################
+# Two arguments
+function (cm::ColMap)(A::AbstractMatrix, D::AbstractMatrix)
+    return hcat(map((f,rng)->f(A[:,rng], D[:,rng]), cm.funcs, cm.col_ranges)...)
+end
+
+
+function ChainRules.rrule(cm::ColMap, A, D)
+
+    pbs = []
+    result = similar(A)
+    for (rng, f) in zip(cm.col_ranges, cm.funcs)
+        res, pb = ChainRules.rrule(f, A[:,rng], D[:,rng])
+        result[:,rng] .= res
+        push!(pbs, pb)
+    end
+
+    function colmap_pullback(result_bar)
+        A_bar = similar(A)
+        funcs_bar = []
+        for (rng, pb) in zip(cm.col_ranges, pbs)
+            fb, Ab, _ = pb(result_bar[:,rng])
+            A_bar[:,rng] .= Ab
+            push!(funcs_bar, fb)
+        end
+
+        cm_bar = Tangent{ColMap}(funcs=Tuple(funcs_bar))
+        return cm_bar, A_bar, ChainRulesCore.NoTangent()
+    end
+
+    return result, colmap_pullback
+end
 
 

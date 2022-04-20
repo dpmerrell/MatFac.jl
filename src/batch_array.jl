@@ -10,9 +10,11 @@ mutable struct BatchArray
     values::Vector{Vector{<:Number}} # Vector of vectors of numbers
 end
 
-# Only the values are trainable
-Flux.trainable(ba::BatchArray) = (ba.values,)
-
+# The values should not be moved to GPU
+# (they need to be scalar-indexable)
+Flux.gpu(ba::BatchArray) = BatchArray(gpu(ba.col_ranges), 
+                                      [gpu(mat) for mat in ba.row_batches],
+                                      ba.values)
 
 function BatchArray(col_batch_ids::Vector, row_batch_ids, 
                     value_dicts::Vector{<:AbstractDict})

@@ -11,8 +11,6 @@ mutable struct BatchMatFacModel
     inv_link::ColMap
 end
 
-@functor BatchMatFacModel
-
 
 function (bm::BatchMatFacModel)()
     return bm.inv_link(

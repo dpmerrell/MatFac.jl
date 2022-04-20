@@ -100,7 +100,7 @@ function ChainRules.rrule(bl::BernoulliLoss, Z, D)
     result .*= nonnan
 
     function bernoulli_loss_pullback(loss_bar)
-        Z_bar = loss_bar.*(-D./Z + (1 .- D) ./ (1 .- Z))
+        Z_bar = loss_bar.*(-D./Z - (1 .- D) ./ (1 .- Z))
         Z_bar .*= nonnan
         return ChainRulesCore.NoTangent(), Z_bar,
                ChainRulesCore.NoTangent()
@@ -175,18 +175,28 @@ end
 # Loss function
 
 mutable struct OrdinalLoss
-    ext_thresholds::AbstractVector{<:Number}
+    ext_thresholds::Vector{<:Number}
 end
 
-@functor OrdinalLoss
+# The thresholds should be trainable,
+# but they should stay off the GPU
+# (they need to be scalar-indexable)
+Flux.trainable(ol::OrdinalLoss) = (ol.ext_thresholds, )
+Flux.gpu(ol::OrdinalLoss) = ol
 
+function OrdinalLoss(n_values::Integer)
+    thresholds = collect(1:(n_values - 1)) .- 0.5*n_values
+    ext_thresholds = [[-Inf]; thresholds; [Inf]]
+    return OrdinalLoss(ext_thresholds)
+end
 
 
 function (ol::OrdinalLoss)(Z::AbstractMatrix, D::AbstractMatrix)
 
-    l_thresh = ol.ext_thresholds[D]
-    r_thresh = ol.ext_thresholds[D .+ UInt8(1)]
-    loss = log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z))
+    D_idx = round.(UInt8, D)
+    l_thresh = ol.ext_thresholds[D_idx]
+    r_thresh = ol.ext_thresholds[D_idx .+ UInt8(1)]
+    loss = -log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z))
 
     return loss
 end
@@ -194,24 +204,26 @@ end
 
 function ChainRules.rrule(ol::OrdinalLoss, Z, D)
 
+    D_idx = round.(UInt8, D)
     N_bins = length(ol.ext_thresholds)-1
-    l_thresh = ol.ext_thresholds[D]
-    r_thresh = ol.ext_thresholds[D .+ UInt8(1)]
+    l_thresh = ol.ext_thresholds[D_idx]
+    r_thresh = ol.ext_thresholds[D_idx .+ UInt8(1)]
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
 
     function ordinal_loss_pullback(loss_bar)
         ol_r_bar = loss_bar .* -sig_r .* (1 .- sig_r) ./ (sig_r .- sig_l)
         ol_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ (sig_r .- sig_l)
-        ol_bar = zeros(N_bins + 1)
+        ol_bar = zero(ol.ext_thresholds)
+        
         for i=1:N_bins
-            relevant_idx = (D .== i) 
+            relevant_idx = (D_idx .== i) 
             ol_bar[i] += sum(ol_l_bar .* relevant_idx)
             ol_bar[i+1] += sum(ol_r_bar .* relevant_idx)
         end
-        ol_bar = convert(typeof(ol.ext_thresholds), ol_bar)
 
-        Z_bar = loss_bar .* (sig_r .+ sig_l .- 1) 
+        ol_bar = Tangent{OrdinalLoss}(ext_thresholds=ol_bar)
+        Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
         return ol_bar, Z_bar, ChainRulesCore.NoTangent()
     end
     
