@@ -183,114 +183,174 @@ function noise_model_tests()
 
 
     @testset "Noise models" begin
-        M = 2
-        N = 4
+        M = 20
+        N = 40
 
         # Normal noise model
         normal_data = ones(M,N)
         normal_Z = zeros(M,N)
-        ni = BMF.NormalInvLink()
-        @test ni(normal_Z) == normal_Z
-        
-        nl = BMF.NormalLoss()
-        @test nl(ni(normal_Z), normal_data) == 0.5.*ones(M,N)
-        @test Flux.gradient(x->sum(nl(ni(x),normal_data)), normal_Z)[1] == -ones(M,N)
+        nn = BMF.NormalNoise()
+        @test BMF.invlink(nn, normal_Z) == normal_Z
+        @test BMF.loss(nn, BMF.invlink(nn, normal_Z), normal_data) == 0.5.*ones(M,N)
+        @test Flux.gradient(x->sum(BMF.loss(nn, BMF.invlink(nn, x),normal_data)), normal_Z)[1] == -ones(M,N)
+        @test Flux.gradient(x->BMF.invlinkloss(nn, x,normal_data), normal_Z)[1] == -ones(M,N)
+
 
         # Logistic noise model
         logistic_data = ones(M,N)
         logistic_Z = zeros(M,N)
-        li = BMF.BernoulliInvLink()
-        @test li(logistic_Z) == 0.5 .* ones(M,N)
-        @test Flux.gradient(x->sum(li(x)), logistic_Z)[1] == li(logistic_Z).*(1 .- li(logistic_Z))
+        ln = BMF.BernoulliNoise()
+        @test BMF.invlink(ln, logistic_Z) == 0.5 .* ones(M,N)
+        @test Flux.gradient(x->sum(BMF.invlink(ln, x)), logistic_Z)[1] == BMF.invlink(ln,logistic_Z).*(1 .- BMF.invlink(ln, logistic_Z))
+        @test BMF.loss(ln, BMF.invlink(ln, logistic_Z), logistic_data) == log(2.0).*ones(M,N)
+        logistic_A = BMF.invlink(ln, logistic_Z)
+        @test Flux.gradient(x->sum(BMF.loss(ln, x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N)
+        @test Flux.gradient(x->BMF.invlinkloss(ln, x, logistic_data), logistic_Z)[1] == (logistic_A .- logistic_data)
 
-        ll = BMF.BernoulliLoss()
-        @test ll(li(logistic_Z), logistic_data) == log(2.0).*ones(M,N)
-        logistic_A = li(logistic_Z)
-        @test Flux.gradient(x->sum(ll(x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N) 
 
         # Poisson noise model
         poisson_data = ones(M,N)
         poisson_Z = zeros(M,N)
-        pil = BMF.PoissonInvLink()
-        @test pil(poisson_Z) == ones(M,N)
-        
-        ploss = BMF.PoissonLoss()
-        @test ploss(pil(poisson_Z), poisson_data) == ones(M,N)
-        @test Flux.gradient(x->sum(ploss(pil(x), logistic_data)), poisson_Z)[1] == zeros(M,N)
-
+        pn = BMF.PoissonNoise()
+        @test BMF.invlink(pn, poisson_Z) == ones(M,N)
+        @test BMF.loss(pn, BMF.invlink(pn, poisson_Z), poisson_data) == ones(M,N)
+        @test Flux.gradient(x->sum(BMF.loss(pn, BMF.invlink(pn, x), logistic_data)), poisson_Z)[1] == zeros(M,N)
+        @test Flux.gradient(x->BMF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
 
         # Ordinal noise model
         ordinal_data = [1 2 3;
                         1 2 3]
         ordinal_Z = [0 0 0;
                      0 0 0]
-        oi = BMF.OrdinalInvLink()
-        @test oi(ordinal_Z) == ordinal_Z 
-        
-        ol = BMF.OrdinalLoss([-Inf, -1, 1, Inf])
-        @test ol(ordinal_Z, ordinal_data) == [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
+        on = BMF.OrdinalNoise([-Inf, -1, 1, Inf])
+        @test BMF.invlink(on, ordinal_Z) == ordinal_Z 
+        @test BMF.loss(on, ordinal_Z, ordinal_data) == [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
                                               -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))]
-        thresh_grad, z_grad = Flux.gradient((ol,x)->sum(ol(oi(x),ordinal_data)), ol, ordinal_Z)
+        thresh_grad, z_grad = Flux.gradient((noise, x)->sum(BMF.loss(noise, BMF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
+        
         lgrad(lt,rt,z) = logistic(lt-z)*(1 - logistic(lt-z))/(logistic(rt-z)-logistic(lt-z))
         rgrad(lt,rt,z) = -logistic(rt-z)*(1 - logistic(rt-z))/(logistic(rt-z)-logistic(lt-z))
-        @test thresh_grad.ext_thresholds == [2*lgrad(-Inf,-1,0), 
+        test_thresh_grad = [2*lgrad(-Inf,-1,0), 
                               2*(rgrad(-Inf,-1,0)+lgrad(-1,1,0)), 
                               2*(rgrad(-1,1,0)+lgrad(1,Inf,0)), 
                               2*rgrad(1,Inf,0)]
-        @test z_grad == [1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1);
+        test_z_grad = [1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1);
                          1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1)]
 
+        @test thresh_grad.ext_thresholds == test_thresh_grad 
+        @test z_grad == test_z_grad 
+
+        thresh_grad, z_grad = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, ordinal_data), on, ordinal_Z)
+        @test thresh_grad.ext_thresholds == test_thresh_grad
+        @test z_grad == test_z_grad
+
+
+        # Composite noise models
+        composite_Z = zeros(M,N)
+        composite_data = zeros(M,N)
+        composite_data[:,21:30] .= 1
+        composite_data[:,31:40] .= 2
+
+        noise_models = repeat(["normal","bernoulli","poisson", "ordinal3"], inner=10)
+        cn = BMF.CompositeNoise(noise_models)
+
+        composite_A = BMF.invlink(cn, composite_Z)
+        @test composite_A[:,1:10] == BMF.invlink(nn, composite_Z[:,1:10])
+        @test composite_A[:,11:20]== BMF.invlink(ln, composite_Z[:,11:20])
+        @test composite_A[:,21:30]== BMF.invlink(pn, composite_Z[:,21:30])
+        @test composite_A[:,31:40]== BMF.invlink(cn.noises[4], composite_Z[:,31:40])
+
+        composite_l = BMF.loss(cn, composite_A, composite_data)
+        @test composite_l[:,1:10] == BMF.loss(nn, composite_A[:,1:10] , composite_data[:,1:10])
+        @test composite_l[:,11:20]== BMF.loss(ln, composite_A[:,11:20], composite_data[:,11:20])
+        @test composite_l[:,21:30]== BMF.loss(pn, composite_A[:,21:30], composite_data[:,21:30])
+        @test composite_l[:,31:40]== BMF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
+
+        grad_cn, grad_Z = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, composite_data), 
+                                        cn, composite_Z)
+        test_grad_Z = zeros(M,N)
+        test_grad_Z[:,11:20] .= 0.5
+        @test grad_Z == grad_Z
+        @test isapprox(grad_cn.noises[4].ext_thresholds, [0.0, 200.0*logistic(-0.5)*(1 - logistic(-0.5))/(logistic(0.5) - logistic(-0.5)), 
+                                                          -200.0*logistic(0.5)*(1 - logistic(0.5))/(logistic(0.5) - logistic(-0.5)) ,0.0])
+        #println("GRAD CN")
+        #println(grad_cn)
+        #println("GRAD Z")
+        #println(grad_Z)
     end
 
 end
 
-function col_map_tests()
-
-    @testset "ColMap" begin
-        M = 4
-        N = 4
-        Nd2 = div(N,2)
-        ordinal_n = 5
-
-        A = zeros(M,N)
-        data = zeros(M,N)
-        data[:,(Nd2+1):N] .= div(ordinal_n,2)+1
-
-        cm = BMF.ColMap((1:Nd2, (Nd2+1):N),
-                        (BMF.NormalLoss(), BMF.OrdinalLoss(ordinal_n)))
-        
-        test_result = zeros(M,N)
-        test_result[:,(Nd2+1):N] .= -log.(logistic(.5) - logistic(-.5))
-        @test cm(A,data) == test_result
-
-        grads = Zygote.gradient(loss_f->sum(loss_f(A,data)), cm)
-        @test grads[1].col_ranges == nothing
-        @test grads[1].funcs[1] == nothing
-        @test size(grads[1].funcs[2].ext_thresholds) == size(cm.funcs[2].ext_thresholds)
-    end
-end
 
 
 function model_tests()
 
     @testset "Model" begin
-
+        
         M = 20
-        N = 30
+        N = 40
         K = 5
+        n_col_batches = 4
+        n_row_batches = 4
+        n_logistic = div(N,4)
+        n_ordinal = div(N,4)
+        n_poisson = div(N,4)
+        n_normal = N - (n_logistic + n_ordinal + n_poisson)
 
-        model = BMF.BatchMatFacModel(M,N,K)
+        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
+        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["ordinal5"], n_ordinal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["normal"], n_normal)]
+
+        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+
+        @test size(model.mp.X) == (K,M)
+        @test map(typeof, model.noise_models.noises) == (BMF.BernoulliNoise, BMF.OrdinalNoise, BMF.PoissonNoise, BMF.NormalNoise)
+        @test size(model()) == (M,N)
+        @test size(model) == (M,N)
+
     end
 end
 
 
+function fit_tests()
+
+    @testset "Fit" begin
+        
+        M = 20
+        N = 40
+        K = 5
+        n_col_batches = 4
+        n_row_batches = 4
+        n_logistic = div(N,4)
+        n_ordinal = div(N,4)
+        n_poisson = div(N,4)
+        n_normal = N - (n_logistic + n_ordinal + n_poisson)
+
+        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
+        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["ordinal5"], n_ordinal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["normal"], n_normal)]
+        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+
+
+    end
+
+end
+
+
+
 function main()
     
-    util_tests()
-    model_core_tests()
-    batch_array_tests()
+    #util_tests()
+    #model_core_tests()
+    #batch_array_tests()
     noise_model_tests()
-    col_map_tests()
+    model_tests()
 
 end
 

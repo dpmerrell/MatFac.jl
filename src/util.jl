@@ -26,7 +26,7 @@ end
 
 function ids_to_ranges(id_vec)
 
-    @assert is_contiguous(id_vec)
+    @assert is_contiguous(id_vec) "IDs in id_vec need to appear in contiguous chunks."
 
     unique_ids = unique(id_vec)
     start_idx = indexin(unique_ids, id_vec)
@@ -77,31 +77,5 @@ function shift_range(rng, delta)
 end
 
 
-#function subset_idx_vecs(idx_vecs::Vector{Vector{Int}}, rng::UnitRange)
-#
-#    r_min = rng.start
-#    r_max = rng.stop
-#
-#    @assert r_min < r_max
-#
-#    new_vec = Vector{Int}[]
-#    kept_idx = Int[]
-#    # Loop the index vectors
-#    for (i, idx_vec) in enumerate(idx_vecs)
-#        # If the given range intersects with this 
-#        # index vector, then we keep a subset of it
-#        if (r_min <= idx_vec[end]) & (r_max >= idx_vec[1])
-#            start_idx = searchsorted(idx_vec, r_min).start
-#            stop_idx = searchsorted(idx_vec, r_max).stop
-#
-#            if start_idx <= stop_idx
-#                push!(new_vec, idx_vec[start_idx:stop_idx])
-#                push!(kept_idx, i)
-#            end
-#        end
-#    end
-#
-#    return new_vec, kept_idx
-#end
 
 
