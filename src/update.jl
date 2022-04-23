@@ -8,7 +8,7 @@
 import Flux.Optimise: update!
 
 
-function update!(opt, params, grads::Tuple)
+function update!(opt, params::Tuple, grads::Tuple)
     for (p, g) in zip(params, grads)
         if g != nothing
             update!(opt, p, g)
@@ -17,7 +17,7 @@ function update!(opt, params, grads::Tuple)
 end
 
 
-function update!(opt, params, grads::NamedTuple)
+function update!(opt, params::Any, grads::NamedTuple)
     for pname in propertynames(grads)
         g = getproperty(grads,pname)
         if g != nothing
@@ -27,13 +27,13 @@ function update!(opt, params, grads::NamedTuple)
 end
 
 
-function update!(opt, params, grads::Vector{Vector})
-    for (p,g) in zip(params, grads)
-        if g != nothing
-            update!(opt, p, g)
-        end
-    end
-end
+#function update!(opt, params, grads::Vector{Vector})
+#    for (p,g) in zip(params, grads)
+#        if g != nothing
+#            update!(opt, p, g)
+#        end
+#    end
+#end
 
 
 

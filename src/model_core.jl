@@ -8,6 +8,7 @@ mutable struct MatProd
     Y::AbstractMatrix
 end
 
+@functor MatProd
 
 function MatProd(M::Int, N::Int, K::Int)
     X = randn(K,M) .* .01 / sqrt(K)
@@ -34,6 +35,7 @@ mutable struct ColScale
     logsigma::AbstractVector
 end
 
+@functor ColScale
 
 function ColScale(N::Int)
     return ColScale(zeros(N))
@@ -57,6 +59,7 @@ mutable struct ColShift
     mu::AbstractVector
 end
 
+@functor ColShift
 
 function ColShift(N::Int)
     return ColShift(randn(N) .* 1e-4)
@@ -80,6 +83,7 @@ mutable struct BatchScale
     logdelta::BatchArray
 end
 
+@functor BatchScale
 
 function BatchScale(col_batches, row_batches)
 
@@ -95,6 +99,14 @@ function (bs::BatchScale)(Z::AbstractMatrix)
 end
 
 
+function view(bs::BatchScale, idx1, idx2)
+    if typeof(idx2) == Colon
+        idx2 = 1:bs.logdelta.col_ranges[end].stop
+    end
+    return BatchScale(view(bs.logdelta, idx1, idx2)) 
+end
+
+
 ##################################
 # Batch Shift
 
@@ -102,6 +114,7 @@ mutable struct BatchShift
     theta::BatchArray
 end
 
+@functor BatchShift
 
 function BatchShift(col_batches, row_batches)
     
@@ -114,6 +127,14 @@ end
 
 function (bs::BatchShift)(Z::AbstractMatrix)
     return Z + bs.theta
+end
+
+
+function view(bs::BatchShift, idx1, idx2)
+    if typeof(idx2) == Colon
+        idx2 = 1:bs.theta.col_ranges[end].stop
+    end
+    return BatchShift(view(bs.theta, idx1, idx2))
 end
 
 

@@ -48,20 +48,15 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                    +model.theta_reg(theta)
                                   )
     
-    # Define some sets of parameters for convenience
-    row_loss_params = (model.mp.Y, model.cscale, model.cshift,
-                       model.bscale, model.bshift,
-                       model.noise_models)
     row_reg_params = (model.mp.Y, model.cscale.logsigma,
                                   model.cshift.mu,
                                   model.bscale.logdelta,
                                   model.bshift.theta)
-    col_loss_params = (model.mp.X,)
     col_reg_params = (model.mp.X,)
     
 
     # Initialize the optimizer
-    opt = Flux.Optimise.ADAGrad(η=lr)
+    opt = Flux.Optimise.ADAGrad(lr)
 
     # Track the loss
     prev_loss = Inf
@@ -74,11 +69,17 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
 
         loss = 0.0
 
-        # For row batch in row_batch_iter
+        ######################################
+        # Iterate through the ROWS of data
         for row_batch in BatchIter(M,row_batch_size)
             
-            D_v = view(D, row_batch, 1:N)
-            model_v = view(model, row_batch, 1:N)
+            D_v = view(D, row_batch, :)
+            model_v = view(model, row_batch, :)
+    
+            # Define some sets of parameters for convenience
+            row_loss_params = (model_v.mp.Y, model_v.cscale, model_v.cshift,
+                               model_v.bscale, model_v.bshift,
+                               model_v.noise_models)
           
             # Curry out the X for this batch;
             # we'll take the gradient for everything else.
@@ -96,7 +97,8 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                                    )
                                                  )
                                                )
-                                             )
+                                             ),
+                                         D_v
                                          )
 
             # Update these parameters via log-likelihood gradient 
@@ -104,16 +106,22 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             update!(opt, row_loss_params, grads)
 
             loss += batchloss
+
+            #sync()
         end
         # Also apply regularizer updates
         regloss, reg_grads = Zygote.withgradient(row_reg, row_reg_params...)
         update!(opt, row_reg_params, reg_grads)
         loss += regloss
 
-        # For col batch in col_batch_iter
+
+        ######################################
+        # Iterate through the COLUMNS of data
         for col_batch in BatchIter(N,col_batch_size)
-            D_v = view(D, 1:M, col_batch)
-            model_v = view(model, 1:M, col_batch)
+            D_v = view(D, :, col_batch)
+            model_v = view(model, :, col_batch)
+    
+            col_loss_params = (model_v.mp.X,)
 
             col_likelihood = (X,) -> invlinkloss(model_v.noise,
                                        model_v.bshift(
@@ -124,18 +132,23 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                                             )
                                                           )
                                                         )
-                                                      )
+                                                      ),
+                                                  D_v
                                                   )
 
             batchloss, grads = Zygote.withgradient(col_likelihood, col_loss_params...)
             update!(opt, col_loss_params, grads)
             loss += batchloss
+
+            #sync()
         end
 
+        # 
         regloss, reg_grads = Zygote.withgradient(col_reg, col_reg_params...)
         update!(opt, col_reg_params, reg_grads)
         loss += regloss
 
+        # Report the loss
         vprint("Loss=",loss, "\n")
 
         # Check termination conditions

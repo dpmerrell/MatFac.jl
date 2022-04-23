@@ -51,7 +51,7 @@ end
 
 
 function subset_ranges(ranges::Vector, rng::UnitRange) 
-    
+   
     r_min = rng.start
     r_max = rng.stop
     @assert r_min <= r_max
@@ -65,17 +65,29 @@ function subset_ranges(ranges::Vector, rng::UnitRange)
     stops = [rr.stop for rr in ranges]
     r_max_idx = searchsorted(stops, r_max).start
 
-    new_ranges = ranges[r_min_idx:r_max_idx]
+    new_ranges = collect(ranges[r_min_idx:r_max_idx])
     new_ranges[1] = r_min:new_ranges[1].stop
     new_ranges[end] = new_ranges[end].start:r_max
 
     return new_ranges, r_min_idx, r_max_idx
 end
 
+function subset_ranges(ranges::Tuple, rng::UnitRange)
+    new_ranges, r_min, r_max = subset_ranges(collect(ranges), rng)
+    return Tuple(new_ranges), r_min, r_max
+end
+
 function shift_range(rng, delta)
     return (rng.start + delta):(rng.stop + delta) 
 end
 
-
+if CUDA.has_cuda()
+    function sync()
+        CUDA.synchronize()
+    end
+else
+    function sync()
+    end
+end
 
 

@@ -20,6 +20,8 @@ mutable struct BatchMatFacModel
     theta_reg
 end
 
+@functor BatchMatFacModel
+
 
 function BatchMatFacModel(mp::MatProd, cscale::ColScale,
                           cshift::ColShift, bscale::BatchScale,

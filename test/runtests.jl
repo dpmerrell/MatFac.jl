@@ -38,6 +38,118 @@ function util_tests()
 
 end
 
+
+function batch_array_tests()
+    
+    @testset "Batch Arrays" begin
+
+        col_batches = ["cat", "cat", "cat", "dog", "dog", "fish"]
+        row_batches = [[1,1,1,2,2], [1,1,2,2,2], [1,1,1,1,2]]
+        values = [Dict(1=>3.14, 2=>2.7), Dict(1=>0.0, 2=>0.5), Dict(1=>-1.0, 2=>1.0)]
+        A = zeros(5,6)
+
+        ##############################
+        # Constructor
+        ba = BMF.BatchArray(col_batches, row_batches, values)
+        @test ba.col_ranges == (1:3, 4:5, 6:6)
+        test_row_batches = (Bool[1 0; 1 0; 1 0; 0 1; 0 1],
+                            Bool[1 0; 1 0; 0 1; 0 1; 0 1],
+                            Bool[1 0; 1 0; 1 0; 1 0; 0 1])
+        @test ba.row_batches == test_row_batches 
+        @test ba.values == ([3.14, 2.7], [0.0, 0.5], [-1.0, 1.0])
+
+        ##############################
+        # View
+        ba_view = view(ba, 2:4, 2:5)
+        @test ba_view.col_ranges == (1:2, 3:4)
+        @test ba_view.row_batches == test_row_batches[1:2]
+        @test ba_view.row_idx == ba.row_idx[2:4]
+        @test ba_view.values == ([3.14, 2.7],[0.0,0.5])
+
+        ###############################
+        # zero
+        ba_zero = zero(ba)
+        @test ba_zero.col_ranges == ba.col_ranges
+        @test ba_zero.row_batches == ba.row_batches
+        @test ba_zero.values == ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
+
+        ###############################
+        # Addition
+        Z = A + ba
+        test_mat = [3.14 3.14 3.14 0.0 0.0 -1.0;
+                    3.14 3.14 3.14 0.0 0.0 -1.0;
+                    3.14 3.14 3.14 0.5 0.5 -1.0;
+                    2.7  2.7  2.7  0.5 0.5 -1.0;
+                    2.7  2.7  2.7  0.5 0.5  1.0]
+        @test Z == test_mat
+        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A, ba)
+        @test A_grad == ones(size(A)...)
+        @test ba_grad.values == ([9., 6.], [4., 6.], [4., 1.])
+
+        ################################
+        # Multiplication
+        Z = ones(5,6) * ba
+        @test Z == test_mat
+        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), ones(5,6), ba)
+        @test A_grad == Z
+        @test ba_grad.values == ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0])
+
+        ################################
+        # Exponentiation
+        ba_exp = exp(ba)
+        @test (ones(5,6) * ba_exp) == exp.(test_mat)
+        (ba_grad,) = Zygote.gradient(x->sum(ones(5,6) * exp(x)), ba)
+        @test ba_grad.values == ([9. * exp(3.14), 6. * exp(2.7)],
+                                 [4. * exp(0.0), 6. * exp(0.5)],
+                                 [4. * exp(-1.0), 1. * exp(1.0)])
+
+        #################################
+        # GPU
+        ba_d = gpu(ba)
+        @test ba.values == ([3.14, 2.7], [0.0, 0.5], [-1.0, 1.0])
+       
+        # view
+        ba_d_view = view(ba_d, 2:4, 2:5)
+        @test ba_d_view.col_ranges == (1:2, 3:4)
+        @test ba_d_view.row_batches == ba_d.row_batches[1:2]
+        @test ba_d_view.row_idx == ba_d.row_idx[2:4]
+        @test ba_d_view.values == ([3.14, 2.7],[0.0,0.5])
+
+        # zero 
+        ba_d_zero = zero(ba_d)
+        @test ba_d_zero.col_ranges == ba_d.col_ranges
+        @test ba_d_zero.row_batches == ba_d.row_batches
+        @test ba_d_zero.values == ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
+
+        # addition
+        A_d = gpu(A)
+        Z_d = A_d + ba_d
+        test_mat_d = gpu(test_mat)
+        @test Z_d == test_mat_d
+        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A_d, ba_d)
+        @test A_grad == gpu(ones(size(A)...))
+        @test ba_grad.values == ([9., 6.], [4., 6.], [4., 1.])
+
+        # multiplication
+        Z_d = gpu(ones(5,6)) * ba_d
+        @test Z_d == test_mat_d
+        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), gpu(ones(5,6)), ba_d)
+        @test A_grad == Z_d
+        @test ba_grad.values == ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0])
+
+        # exponentiation
+        ba_d_exp = exp(ba_d)
+        @test isapprox((gpu(ones(5,6)) * ba_d_exp), exp.(test_mat_d))
+        (ba_grad,) = Zygote.gradient(x->sum(gpu(ones(5,6)) * exp(x)), ba_d)
+        @test ba_grad.values == ([9. * exp(3.14), 6. * exp(2.7)],
+                                 [4. * exp(0.0), 6. * exp(0.5)],
+                                 [4. * exp(-1.0), 1. * exp(1.0)])
+
+
+    end
+end
+
+
 function model_core_tests()
 
     @testset "Model Core" begin
@@ -88,7 +200,7 @@ function model_core_tests()
         col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
         row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
         bscale = BMF.BatchScale(col_batches, row_batches)
-        @test size(bscale.logdelta.values) == (n_col_batches,)
+        @test length(bscale.logdelta.values) == n_col_batches
         @test size(bscale.logdelta.values[1]) == (n_row_batches,)
         @test bscale(xy)[1:div(M,n_row_batches),1:div(N,n_col_batches)] == xy[1:div(M,n_row_batches),1:div(N,n_col_batches)] .* exp(bscale.logdelta.values[1][1])
 
@@ -99,81 +211,13 @@ function model_core_tests()
         ##################################
         # Batch Shift
         bshift = BMF.BatchShift(col_batches, row_batches)
-        @test size(bshift.theta.values) == (n_col_batches,)
+        @test length(bshift.theta.values) == n_col_batches
         @test size(bshift.theta.values[1]) == (n_row_batches,)
         @test bshift(xy)[1:div(M,n_row_batches),1:div(N,n_col_batches)] == xy[1:div(M,n_row_batches),1:div(N,n_col_batches)] .+ bshift.theta.values[1][1]
 
         bshift_grads = Zygote.gradient((f,x)->sum(f(x)), bshift, xy)
-        @test bshift_grads[1].theta.values == [ones(n_row_batches).*(div(M,n_row_batches)*div(N,n_col_batches)) for j=1:n_col_batches]
+        @test bshift_grads[1].theta.values == Tuple(ones(n_row_batches).*(div(M,n_row_batches)*div(N,n_col_batches)) for j=1:n_col_batches)
         @test bshift_grads[2] == ones(M,N)
-
-    end
-end
-
-
-function batch_array_tests()
-    
-    @testset "Batch Arrays" begin
-
-        col_batches = ["cat", "cat", "cat", "dog", "dog", "fish"]
-        row_batches = [[1,1,1,2,2], [1,1,2,2,2], [1,1,1,1,2]]
-        values = [Dict(1=>3.14, 2=>2.7), Dict(1=>0.0, 2=>0.5), Dict(1=>-1.0, 2=>1.0)]
-        A = zeros(5,6)
-
-        ##############################
-        # Constructor
-        ba = BMF.BatchArray(col_batches, row_batches, values)
-        @test ba.col_ranges == [1:3, 4:5, 6:6]
-        test_row_batches = [Bool[1 0; 1 0; 1 0; 0 1; 0 1],
-                            Bool[1 0; 1 0; 0 1; 0 1; 0 1],
-                            Bool[1 0; 1 0; 1 0; 1 0; 0 1]]
-        @test ba.row_batches == test_row_batches 
-        @test ba.values == [[3.14, 2.7], [0.0, 0.5], [-1.0, 1.0]]
-
-        ##############################
-        # View
-        ba_view = view(ba, 2:4, 2:5)
-        @test ba_view.col_ranges == [1:2, 3:4]
-        @test ba_view.row_batches == [test_row_batches[1][2:4,:],
-                                      test_row_batches[2][2:4,:]]
-        @test ba_view.values == [[3.14, 2.7],[0.0,0.5]]
-
-        ###############################
-        # zero
-        ba_zero = zero(ba)
-        @test ba_zero.col_ranges == ba.col_ranges
-        @test ba_zero.row_batches == ba.row_batches
-        @test ba_zero.values == [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0]]
-
-        ###############################
-        # Addition
-        Z = A + ba
-        test_mat = [3.14 3.14 3.14 0.0 0.0 -1.0;
-                    3.14 3.14 3.14 0.0 0.0 -1.0;
-                    3.14 3.14 3.14 0.5 0.5 -1.0;
-                    2.7  2.7  2.7  0.5 0.5 -1.0;
-                    2.7  2.7  2.7  0.5 0.5  1.0]
-        @test Z == test_mat
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A, ba)
-        @test A_grad == ones(size(A)...)
-        @test ba_grad.values == [[9., 6.], [4., 6.], [4., 1.]]
-
-        ################################
-        # Multiplication
-        Z = ones(5,6) * ba
-        @test Z == test_mat
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), ones(5,6), ba)
-        @test A_grad == Z
-        @test ba_grad.values == [[9.0, 6.0],[4.0, 6.0],[4.0, 1.0]]
-
-        ################################
-        # Exponentiation
-        ba_exp = exp(ba)
-        @test (ones(5,6) * ba_exp) == exp.(test_mat)
-        (ba_grad,) = Zygote.gradient(x->sum(ones(5,6) * exp(x)), ba)
-        @test ba_grad.values == [[9. * exp(3.14), 6. * exp(2.7)],
-                                 [4. * exp(0.0), 6. * exp(0.5)],
-                                 [4. * exp(-1.0), 1. * exp(1.0)]]
 
     end
 end
@@ -270,13 +314,22 @@ function noise_model_tests()
                                         cn, composite_Z)
         test_grad_Z = zeros(M,N)
         test_grad_Z[:,11:20] .= 0.5
-        @test grad_Z == grad_Z
-        @test isapprox(grad_cn.noises[4].ext_thresholds, [0.0, 200.0*logistic(-0.5)*(1 - logistic(-0.5))/(logistic(0.5) - logistic(-0.5)), 
-                                                          -200.0*logistic(0.5)*(1 - logistic(0.5))/(logistic(0.5) - logistic(-0.5)) ,0.0])
-        #println("GRAD CN")
-        #println(grad_cn)
-        #println("GRAD Z")
-        #println(grad_Z)
+        test_grad_ordinal = [0.0, 200.0*logistic(-0.5)*(1 - logistic(-0.5))/(logistic(0.5) - logistic(-0.5)),
+                             -200.0*logistic(0.5)*(1 - logistic(0.5))/(logistic(0.5) - logistic(-0.5)) ,0.0]
+        @test grad_Z == test_grad_Z
+        @test isapprox(grad_cn.noises[4].ext_thresholds, test_grad_ordinal) 
+                                                         
+
+        # GPU tests
+        cn_d = gpu(cn)
+        composite_Z_d = gpu(composite_Z)
+        composite_data_d = gpu(composite_data)
+        test_grad_Z_d = gpu(test_grad_Z)
+        test_grad_ordinal_d = gpu(test_grad_ordinal)
+        grad_cn_d, grad_Z_d = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, composite_data_d), 
+                                            cn_d, composite_Z_d)
+        @test isapprox(grad_Z_d, test_grad_Z_d)
+        @test isapprox(grad_cn_d.noises[4].ext_thresholds, test_grad_ordinal_d)
     end
 
 end
@@ -311,6 +364,14 @@ function model_tests()
         @test size(model()) == (M,N)
         @test size(model) == (M,N)
 
+        # GPU
+        model_d = gpu(model)
+        @test isapprox(model_d.mp(), gpu(model.mp()))
+        @test isapprox(model_d.cscale.logsigma, gpu(model.cscale.logsigma))
+        @test isapprox(model_d.cshift.mu, gpu(model.cshift.mu))
+        @test all(map(isapprox, model_d.bscale.logdelta.values, model.bscale.logdelta.values))
+        @test all(map(isapprox, model_d.bshift.theta.values, model.bshift.theta.values))
+        @test isapprox(model_d(), gpu(model()))
     end
 end
 
@@ -321,25 +382,28 @@ function fit_tests()
         
         M = 20
         N = 40
-        K = 5
+        K = 3
         n_col_batches = 4
         n_row_batches = 4
-        n_logistic = div(N,4)
-        n_ordinal = div(N,4)
-        n_poisson = div(N,4)
-        n_normal = N - (n_logistic + n_ordinal + n_poisson)
+        n_logistic = div(N,n_col_batches)
+        n_ordinal = div(N,n_col_batches)
+        n_poisson = div(N,n_col_batches)
+        n_normal = div(N,n_col_batches) 
 
         col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
         row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
         col_losses = [repeat(["bernoulli"], n_logistic);
-                      repeat(["ordinal5"], n_ordinal);
+                      repeat(["normal"], n_normal);
                       repeat(["poisson"], n_poisson);
-                      repeat(["normal"], n_normal)]
+                      repeat(["ordinal5"], n_ordinal)];
         model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
 
+        composite_data = zeros(M,N)
+        composite_data[:,21:30] .= 1
+        composite_data[:,31:40] .= 3
 
+        fit!(model, composite_data; verbose=true)
     end
-
 end
 
 
@@ -347,13 +411,14 @@ end
 function main()
     
     #util_tests()
-    #model_core_tests()
     #batch_array_tests()
-    noise_model_tests()
-    model_tests()
+    #model_core_tests()
+    #noise_model_tests()
+    #model_tests()
+    fit_tests()
 
 end
 
-
 main()
+
 

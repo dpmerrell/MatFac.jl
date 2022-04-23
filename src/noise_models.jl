@@ -210,7 +210,7 @@ end
 # Inverse link function
 
 mutable struct OrdinalNoise 
-    ext_thresholds::Vector{<:Number}
+    ext_thresholds::AbstractVector{<:Number}
 end
 
 function OrdinalNoise(n_values::Integer)
@@ -222,8 +222,8 @@ end
 # The thresholds should be trainable,
 # but they should stay off the GPU
 # (they need to be scalar-indexable)
+@functor OrdinalNoise
 Flux.trainable(on::OrdinalNoise) = (on.ext_thresholds, )
-Flux.gpu(on::OrdinalNoise) = on
 
 
 function invlink(on::OrdinalNoise, A)
@@ -245,14 +245,18 @@ end
 function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
     nanvals = isnan.(D)
-    D[nanvals] .= 1 # Handle missing data
 
     D_idx = round.(UInt8, D)
+    D_idx[nanvals] .= UInt8(1)
     N_bins = length(on.ext_thresholds)-1
     l_thresh = on.ext_thresholds[D_idx]
     r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
+    #println(nanvals)
+    #println(D_idx)
+    #println(sig_r)
+    #println(sig_l)
     sig_r[nanvals] .= 1 # These settings ensure that the missing
     sig_l[nanvals] .= 0 # data don't contribute to loss or gradients
 
@@ -260,15 +264,15 @@ function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
     function loss_ordinal_pullback(loss_bar)
         on_r_bar = loss_bar .* -sig_r .* (1 .- sig_r) ./ (sig_r .- sig_l)
         on_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ (sig_r .- sig_l)
-        on_bar = zero(on.ext_thresholds)
-        
+        on_bar = zeros(length(on.ext_thresholds))
         for i=1:N_bins
             relevant_idx = (D_idx .== i) 
             on_bar[i] += sum(on_l_bar .* relevant_idx)
             on_bar[i+1] += sum(on_r_bar .* relevant_idx)
         end
 
-        on_bar = Tangent{OrdinalNoise}(ext_thresholds=on_bar)
+        T = typeof(on.ext_thresholds) # Move to GPU if necessary 
+        on_bar = Tangent{OrdinalNoise}(ext_thresholds=T(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
 
         return ChainRulesCore.NoTangent(), 
@@ -300,10 +304,11 @@ end
 
 
 mutable struct CompositeNoise
-    col_ranges::Tuple
-    noises::Tuple
+    col_ranges::Tuple # UnitRanges
+    noises::Tuple # NoiseModel objects
 end
 
+@functor CompositeNoise
 
 function CompositeNoise(noise_model_ids::Vector{String})
     
@@ -316,7 +321,8 @@ function CompositeNoise(noise_model_ids::Vector{String})
 end
 
 
-function view(cn::CompositeNoise, idx)
+function view(cn::CompositeNoise, idx::UnitRange)
+
     new_ranges, r_min, r_max = subset_ranges(cn.col_ranges, idx)
     shifted_new_ranges = shift_range.(new_ranges, (1 - new_ranges[1].start))
 
@@ -332,9 +338,44 @@ function view(cn::CompositeNoise, idx)
 end
 
 
+function view(cn::CompositeNoise, idx::Colon)
+    idx = 1:cn.col_ranges[end].stop
+    return view(cn, idx)
+end
+
+
 invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, A[:,rng]), cn.noises, cn.col_ranges)...)
-loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, Z[:,rng], D[:,rng]), cn.noises, cn.col_ranges)...)
-invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, A[:,rng], D[:,rng]), cn.noises, cn.col_ranges))
+loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, Z[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges)...)
+invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, A[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges))
+
+function ChainRules.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
+
+    result = 0
+    pullbacks = []
+    for (noise, rng) in zip(cn.noises, cn.col_ranges)
+        lss, pb = Zygote.pullback(invlinkloss, noise, A[:,rng], view(D, :, rng))
+        result += lss
+        push!(pullbacks, pb)
+    end
+
+    function invlinkloss_composite_pullback(result_bar)
+        cn_bar = []
+        A_bar = similar(A)
+  
+        for (rng, pb) in zip(cn.col_ranges, pullbacks)
+            noise_bar, abar, _ = pb(result_bar)
+            push!(cn_bar, noise_bar)
+            A_bar[:,rng] .= abar
+        end
+
+        return ChainRulesCore.NoTangent(),
+               Tangent{CompositeNoise}(noises=Tuple(cn_bar)),
+               A_bar,
+               ChainRulesCore.NoTangent()
+    end
+
+    return result, invlinkloss_composite_pullback
+end
 
 
 ######################################################
