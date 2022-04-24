@@ -295,8 +295,8 @@ function noise_model_tests()
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 2
 
-        noise_models = repeat(["normal","bernoulli","poisson", "ordinal3"], inner=10)
-        cn = BMF.CompositeNoise(noise_models)
+        noise_model = repeat(["normal","bernoulli","poisson", "ordinal3"], inner=10)
+        cn = BMF.CompositeNoise(noise_model)
 
         composite_A = BMF.invlink(cn, composite_Z)
         @test composite_A[:,1:10] == BMF.invlink(nn, composite_Z[:,1:10])
@@ -360,7 +360,7 @@ function model_tests()
         model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
 
         @test size(model.mp.X) == (K,M)
-        @test map(typeof, model.noise_models.noises) == (BMF.BernoulliNoise, BMF.OrdinalNoise, BMF.PoissonNoise, BMF.NormalNoise)
+        @test map(typeof, model.noise_model.noises) == (BMF.BernoulliNoise, BMF.OrdinalNoise, BMF.PoissonNoise, BMF.NormalNoise)
         @test size(model()) == (M,N)
         @test size(model) == (M,N)
 
@@ -402,7 +402,10 @@ function fit_tests()
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
-        fit!(model, composite_data; verbose=true)
+        fit!(model, composite_data; verbose=true, lr=0.05)
+        @test true
+
+
     end
 end
 
@@ -410,11 +413,11 @@ end
 
 function main()
     
-    #util_tests()
-    #batch_array_tests()
-    #model_core_tests()
-    #noise_model_tests()
-    #model_tests()
+    util_tests()
+    batch_array_tests()
+    model_core_tests()
+    noise_model_tests()
+    model_tests()
     fit_tests()
 
 end

@@ -6,7 +6,6 @@ import ScikitLearnBase: fit!
 export fit!
 
 
-
 function fit!(model::BatchMatFacModel, D::AbstractMatrix;
               capacity::Integer=Integer(1e8), 
               max_epochs=1000, lr=0.01, abs_tol=1e-9, rel_tol=1e-6,
@@ -77,9 +76,9 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             model_v = view(model, row_batch, :)
     
             # Define some sets of parameters for convenience
-            row_loss_params = (model_v.mp.Y, model_v.cscale, model_v.cshift,
+            row_loss_params = (model.mp.Y, model.cscale, model.cshift,
                                model_v.bscale, model_v.bshift,
-                               model_v.noise_models)
+                               model.noise_model)
           
             # Curry out the X for this batch;
             # we'll take the gradient for everything else.
@@ -106,8 +105,6 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             update!(opt, row_loss_params, grads)
 
             loss += batchloss
-
-            #sync()
         end
         # Also apply regularizer updates
         regloss, reg_grads = Zygote.withgradient(row_reg, row_reg_params...)
@@ -121,14 +118,14 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             D_v = view(D, :, col_batch)
             model_v = view(model, :, col_batch)
     
-            col_loss_params = (model_v.mp.X,)
+            col_loss_params = (model.mp.X,)
 
-            col_likelihood = (X,) -> invlinkloss(model_v.noise,
+            col_likelihood = (X,) -> invlinkloss(model_v.noise_model,
                                        model_v.bshift(
                                          model_v.bscale(
                                            model_v.cshift(
                                              model_v.cscale(
-                                               transpose(X)*model_v.mp.Y
+                                               transpose(transpose(model_v.mp.Y)*X)
                                                             )
                                                           )
                                                         )
@@ -138,9 +135,8 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
 
             batchloss, grads = Zygote.withgradient(col_likelihood, col_loss_params...)
             update!(opt, col_loss_params, grads)
+        
             loss += batchloss
-
-            #sync()
         end
 
         # 

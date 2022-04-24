@@ -253,10 +253,6 @@ function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
     r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
-    #println(nanvals)
-    #println(D_idx)
-    #println(sig_r)
-    #println(sig_l)
     sig_r[nanvals] .= 1 # These settings ensure that the missing
     sig_l[nanvals] .= 0 # data don't contribute to loss or gradients
 

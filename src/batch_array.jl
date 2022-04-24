@@ -42,16 +42,17 @@ function view(ba::BatchArray, idx1, idx2::UnitRange)
     new_row_batches = ba.row_batches[r_min:r_max]
     new_values = ba.values[r_min:r_max]
 
-    return BatchArray(new_col_ranges, new_row_idx, Tuple(new_row_batches), new_values)
+    return BatchArray(new_col_ranges, new_row_idx, 
+                      new_row_batches, new_values)
 end
 
 
 function zero(ba::BatchArray)
-    cvalues = [zero(v) for v in ba.values]
+    cvalues = map(zero, ba.values)
     return BatchArray(deepcopy(ba.col_ranges),
                       deepcopy(ba.row_idx),
                       deepcopy(ba.row_batches), 
-                      Tuple(cvalues)) 
+                      cvalues) 
 end
 
 
@@ -76,13 +77,14 @@ function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BatchArray)
     function ba_plus_pullback(result_bar)
         A_bar = copy(result_bar) # Just a copy of the result tangent 
         
-        B_bar = zero(B) # Just sum the result tangents corresponding
-                        # to each value of B
-        for (j, cbr) in enumerate(B_bar.col_ranges)
-            for i=1:length(B_bar.values[j])
-                B_bar.values[j][i] = sum(result_bar[B_bar.row_batches[j][B.row_idx,i], cbr])
+        values_bar = map(zero, B.values) # Just sum the result tangents corresponding
+                                         # to each value of B
+        for (j, cbr) in enumerate(B.col_ranges)
+            for i=1:length(B.values[j])
+                values_bar[j][i] = sum(result_bar[B.row_batches[j][B.row_idx,i], cbr])
             end
         end
+        B_bar = Tangent{BatchArray}(values=values_bar)
         return ChainRulesCore.NoTangent(), A_bar, B_bar 
     end
 
@@ -110,16 +112,16 @@ function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BatchArray)
     
     function ba_mult_pullback(result_bar)
         A_bar = (result_bar .+ zero(A)) * B # result tangent multiplied by B
-        B_bar = zero(B) # Just sum the (result_tangents.*A_entries) corresponding
-                        # to each value of B
+        values_bar = map(zero, B.values) # Just sum the (result_tangents.*A_entries) corresponding
+                                         # to each value of B
 
-        for (j, cbr) in enumerate(B_bar.col_ranges)
-            for i=1:length(B_bar.values[j])
-                rbatch = B_bar.row_batches[j][B.row_idx,i]
-                B_bar.values[j][i] = sum(result_bar[rbatch,cbr] .* A[rbatch,cbr])
+        for (j, cbr) in enumerate(B.col_ranges)
+            for i=1:length(B.values[j])
+                rbatch = B.row_batches[j][B.row_idx,i]
+                values_bar[j][i] = sum(result_bar[rbatch,cbr] .* A[rbatch,cbr])
             end
         end
-
+        B_bar = Tangent{BatchArray}(values=values_bar)
         return ChainRulesCore.NoTangent(), A_bar, B_bar 
     end
 
@@ -142,13 +144,9 @@ function ChainRules.rrule(::typeof(exp), ba::BatchArray)
     Z = exp(ba)
 
     function ba_exp_pullback(Z_bar)
-        ba_bar = BatchArray(deepcopy(ba.col_ranges),
-                            deepcopy(ba.row_idx),
-                            deepcopy(ba.row_batches),
-                            deepcopy(Z.values))
-        ba_bar.values = map(.*, ba_bar.values, Z_bar.values)
-
-        return ChainRulesCore.NoTangent(), ba_bar
+        values_bar = map(.*, Z_bar.values, Z.values)
+        return ChainRulesCore.NoTangent(),
+               Tangent{BatchArray}(values=Tuple(values_bar))
     end
 
     return Z, ba_exp_pullback

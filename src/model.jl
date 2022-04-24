@@ -8,7 +8,7 @@ mutable struct BatchMatFacModel
     cshift::ColShift
     bscale::BatchScale
     bshift::BatchShift
-    noise_models::CompositeNoise
+    noise_model::CompositeNoise
 
     # Regularizers. May be pure functions
     # or callable structs (with their own parameters!)
@@ -25,21 +25,28 @@ end
 
 function BatchMatFacModel(mp::MatProd, cscale::ColScale,
                           cshift::ColShift, bscale::BatchScale,
-                          bshift::BatchShift, noise_models::CompositeNoise;
+                          bshift::BatchShift, noise_model::CompositeNoise;
                           X_reg=nothing, Y_reg=nothing,
                           logsigma_reg=nothing, mu_reg=nothing,
                           logdelta_reg=nothing, theta_reg=nothing)
 
-    for reg in (X_reg, Y_reg, logsigma_reg, mu_reg, logdelta_reg, theta_reg)
-        if reg == nothing
-            reg = x -> 0.0
+    kwargs = Dict{Symbol,Any}(:X_reg=>X_reg, :Y_reg=>Y_reg,
+                              :logsigma_reg=>logsigma_reg,
+                              :mu_reg=>mu_reg,
+                              :logdelta_reg=>logdelta_reg,
+                              :theta_reg=>theta_reg)
+                  
+    for (k,v) in kwargs
+        if v == nothing
+            kwargs[k] = x -> 0.0
         end
     end
 
     return BatchMatFacModel(mp, cscale, cshift, bscale,
-                            bshift, noise_models,
-                            X_reg, Y_reg, logsigma_reg, mu_reg,
-                            logdelta_reg, theta_reg)
+                            bshift, noise_model,
+                            kwargs[:X_reg], kwargs[:Y_reg],
+                            kwargs[:logsigma_reg], kwargs[:mu_reg],
+                            kwargs[:logdelta_reg], kwargs[:theta_reg])
 
 end
 
@@ -54,16 +61,16 @@ function BatchMatFacModel(M::Integer, N::Integer, K::Integer,
     bscale = BatchScale(col_batch_ids, row_batch_ids)
     bshift = BatchShift(col_batch_ids, row_batch_ids)
 
-    noise_models = CompositeNoise(col_losses)
+    noise_model = CompositeNoise(col_losses)
 
     return BatchMatFacModel(mp, cscale, cshift,
                                 bscale, bshift,
-                                noise_models; kwargs...)
+                                noise_model; kwargs...)
 end
 
 
 function (bm::BatchMatFacModel)()
-    return invlink(bm.noise_models, 
+    return invlink(bm.noise_model, 
                     bm.bshift(
                           bm.bscale(
                                  bm.cshift(
@@ -83,7 +90,7 @@ function view(bm::BatchMatFacModel, idx1, idx2)
                             view(bm.cshift, idx2),
                             view(bm.bscale, idx1, idx2),
                             view(bm.bshift, idx1, idx2),
-                            view(bm.noise_models, idx2),
+                            view(bm.noise_model, idx2),
                             nothing, nothing, nothing,
                             nothing, nothing, nothing
                            )
