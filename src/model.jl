@@ -102,3 +102,13 @@ function Base.size(bm::BatchMatFacModel)
     return (size(bm.mp.X,2),size(bm.mp.Y,2))
 end
 
+
+function save_model(filename, model)
+    BSON.@save filename model
+end
+
+function load_model(filename)
+    BSON.@load filename model
+    return model
+end
+

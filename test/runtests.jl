@@ -402,13 +402,48 @@ function fit_tests()
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
-        fit!(model, composite_data; verbose=true, lr=0.05)
+        # Just test whether the fit! function can run to
+        # completion (under max_epochs condition)
+        fit!(model, composite_data; verbose=false, lr=0.05, max_epochs=10)
         @test true
-
 
     end
 end
 
+function io_tests()
+
+    @testset "IO tests" begin
+
+        test_bson_path = "model_test.bson"
+
+        M = 20
+        N = 40
+        K = 3
+        n_col_batches = 4
+        n_row_batches = 4
+        n_logistic = div(N,n_col_batches)
+        n_ordinal = div(N,n_col_batches)
+        n_poisson = div(N,n_col_batches)
+        n_normal = div(N,n_col_batches) 
+
+        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
+        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["normal"], n_normal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["ordinal5"], n_ordinal)];
+        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+       
+        BMF.save_model(test_bson_path, model)
+
+        new_model = BMF.load_model(test_bson_path)
+
+        @test new_model.mp.X == model.mp.X
+        @test new_model.noise_model.noises[4].ext_thresholds == model.noise_model.noises[4].ext_thresholds
+
+        rm(test_bson_path)
+    end
+end
 
 
 function main()
@@ -419,6 +454,7 @@ function main()
     noise_model_tests()
     model_tests()
     fit_tests()
+    io_tests()
 
 end
 
