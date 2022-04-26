@@ -1,6 +1,7 @@
 
 import Base: view
 
+export BatchMatFacModel, save_model, load_model
 
 mutable struct BatchMatFacModel
     mp::MatProd

@@ -38,20 +38,25 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     col_batch_size = div(capacity,M)
 
     # Unpack regularizers
-    col_reg = (X,) -> model.X_reg(X)
-    row_reg = (Y,logsigma,mu,
-               logdelta,theta) -> (model.Y_reg(Y)
-                                   +model.logsigma_reg(logsigma)
-                                   +model.mu_reg(mu)
-                                   +model.logdelta_reg(logdelta)
-                                   +model.theta_reg(theta)
-                                  )
+    col_reg = (X, X_reg) -> X_reg(X)
+    col_reg_params = (model.mp.X, model.X_reg)
+
+    row_reg = (Y, Y_reg,
+               logsigma, logsigma_reg,
+               mu, mu_reg,
+               logdelta, logdelta_reg,
+               theta, theta_reg) -> (Y_reg(Y)
+                                     +logsigma_reg(logsigma)
+                                     +mu_reg(mu)
+                                     +logdelta_reg(logdelta)
+                                     +theta_reg(theta)
+                                    )
     
-    row_reg_params = (model.mp.Y, model.cscale.logsigma,
-                                  model.cshift.mu,
-                                  model.bscale.logdelta,
-                                  model.bshift.theta)
-    col_reg_params = (model.mp.X,)
+    row_reg_params = (model.mp.Y, model.Y_reg,
+                      model.cscale.logsigma, model.logsigma_reg,
+                      model.cshift.mu, model.mu_reg,
+                      model.bscale.logdelta, model.logdelta_reg,
+                      model.bshift.theta, model.theta_reg)
     
 
     # Initialize the optimizer
@@ -106,7 +111,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
 
             loss += batchloss
         end
-        # Also apply regularizer updates
+        # Apply regularizer gradients to Y, sigma, mu, etc.
         regloss, reg_grads = Zygote.withgradient(row_reg, row_reg_params...)
         update!(opt, row_reg_params, reg_grads)
         loss += regloss
@@ -139,7 +144,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             loss += batchloss
         end
 
-        # 
+        # Apply regularizer gradients to X 
         regloss, reg_grads = Zygote.withgradient(col_reg, col_reg_params...)
         update!(opt, col_reg_params, reg_grads)
         loss += regloss
