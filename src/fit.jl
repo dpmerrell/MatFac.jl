@@ -69,14 +69,16 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     epoch = 1
     while epoch <= max_epochs
 
-        vprint("Epoch ",epoch,":\t")
+        vprint("Epoch ",epoch,":  ")
 
         loss = 0.0
 
         ######################################
         # Iterate through the ROWS of data
         for row_batch in BatchIter(M,row_batch_size)
-            
+
+            #println(string("\tROW BATCH, ", row_batch))
+
             D_v = view(D, row_batch, :)
             model_v = view(model, row_batch, :)
     
@@ -120,6 +122,9 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         ######################################
         # Iterate through the COLUMNS of data
         for col_batch in BatchIter(N,col_batch_size)
+            
+            #println(string("\tCOL BATCH, ", col_batch))
+
             D_v = view(D, :, col_batch)
             model_v = view(model, :, col_batch)
     
@@ -167,7 +172,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     end
     println(string("Terminated: reached max_epochs=",max_epochs))
 
-    cpu(model)
+    model = cpu(model)
 end
 
 

@@ -1,7 +1,8 @@
 
 module BatchMatFac
 
-using Flux, Functors, Zygote, ChainRules, ChainRulesCore, CUDA, BSON
+using Flux, Functors, Zygote, ChainRules, ChainRulesCore, CUDA, BSON,
+      Distributions
 
 include("util.jl")
 include("batch_iter.jl")

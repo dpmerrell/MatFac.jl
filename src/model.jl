@@ -103,13 +103,38 @@ function Base.size(bm::BatchMatFacModel)
     return (size(bm.mp.X,2),size(bm.mp.Y,2))
 end
 
+##############################################
+# Equality operation
+EqTypes = Union{MatProd,ColScale,ColShift,BatchScale,BatchShift,CompositeNoise,
+                BatchArray,NormalNoise,PoissonNoise,BernoulliNoise,OrdinalNoise,
+                BatchMatFacModel}
+
+NoEqTypes = Function
+
+function Base.:(==)(a::T, b::T) where T <: EqTypes
+    for fn in fieldnames(T)
+        af = getfield(a, fn)
+        bf = getfield(b, fn)
+        if !(af == bf)
+            if !((typeof(af) <: NoEqTypes) & (typeof(bf) <: NoEqTypes))
+                println(string("NOT EQUAL: ", fn))
+                return false
+            end
+        end
+    end
+    return true
+end
+
+
+################################################
+# Model file I/O
 
 function save_model(filename, model)
     BSON.@save filename model
 end
 
 function load_model(filename)
-    BSON.@load filename model
+    model = BSON.load(filename, @__MODULE__)
     return model
 end
 

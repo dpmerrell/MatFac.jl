@@ -410,6 +410,18 @@ function fit_tests()
     end
 end
 
+
+function simulate_tests()
+
+    @testset "Simulation" begin
+
+        @test true
+
+    end
+
+end
+
+
 function io_tests()
 
     @testset "IO tests" begin
@@ -454,6 +466,7 @@ function main()
     noise_model_tests()
     model_tests()
     fit_tests()
+    simulate_tests()
     io_tests()
 
 end

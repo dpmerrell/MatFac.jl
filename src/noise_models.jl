@@ -47,6 +47,11 @@ function view(nn::NormalNoise, idx)
 end
 
 
+function simulate(nn::NormalNoise, Z, std)
+    return Z .+ randn(size(Z)...).*transpose(std)
+end
+
+
 #########################################################
 # Bernoulli (logistic) noise model
 #########################################################
@@ -132,6 +137,15 @@ function view(bn::BernoulliNoise, idx)
 end
 
 
+function simulate(bn::BernoulliNoise, Z, p)
+
+    signal = (rand(size(Z)...) .<= Z)
+    noise = (rand(size(Z)...) .<= transpose(p))
+
+    return xor.(signal, noise)
+end
+
+
 #########################################################
 # Poisson noise model
 #########################################################
@@ -203,6 +217,12 @@ function view(pn::PoissonNoise, idx)
 end
 
 
+poisson_sample(z) = rand(Poisson(z))
+
+function simulate(pn::PoissonNoise, Z, noise)
+    return poisson_sample.(Z .+ transpose(noise))
+end
+
 #########################################################
 # Ordinal noise model
 #########################################################
@@ -219,11 +239,7 @@ function OrdinalNoise(n_values::Integer)
     return OrdinalNoise(ext_thresholds)
 end
 
-# The thresholds should be trainable,
-# but they should stay off the GPU
-# (they need to be scalar-indexable)
 @functor OrdinalNoise
-Flux.trainable(on::OrdinalNoise) = (on.ext_thresholds, )
 
 
 function invlink(on::OrdinalNoise, A)
@@ -241,13 +257,19 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix)
     return loss
 end
 
+function summary_str(A::AbstractArray, name::String)
+    return string(name, ": ", size(A), " ", typeof(A))
+end
+
+
+nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
+
 
 function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
     nanvals = isnan.(D)
+    D_idx = nanround.(D)
 
-    D_idx = round.(UInt8, D)
-    D_idx[nanvals] .= UInt8(1)
     N_bins = length(on.ext_thresholds)-1
     l_thresh = on.ext_thresholds[D_idx]
     r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
@@ -290,6 +312,23 @@ function view(on::OrdinalNoise, idx)
     return on
 end
 
+
+function simulate(on::OrdinalNoise, Z, noise)
+   
+    Z_noise = Z .+ randn(size(Z)...).*transpose(noise)
+    n_bins = length(on.ext_thresholds) - 1
+
+    data = zero(Z)
+    for i=1:n_bins
+        l_thresh = on.ext_thresholds[i]
+        r_thresh = on.ext_thresholds[i+1]
+        valid_idx = ((l_thresh .<= Z_noise) .& (Z_noise .<= r_thresh))
+        
+        result[valid_idx] .= i 
+    end
+
+    return data
+end
 
 
 #########################################################
@@ -373,6 +412,17 @@ function ChainRules.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
     return result, invlinkloss_composite_pullback
 end
 
+
+function simulate(cn::CompositeNoise, Z, noise_param)
+
+    result = zero(Z)
+
+    for (rng, nm) in zip(cn.col_ranges, cn.noises)
+        result[:,rng] .= simulate(nm, Z[:,rng], noise_param[rng])
+    end
+
+    return result
+end
 
 ######################################################
 # HELPER FUNCTIONS
