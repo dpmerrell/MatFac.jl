@@ -58,7 +58,6 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                       model.bscale.logdelta, model.logdelta_reg,
                       model.bshift.theta, model.theta_reg)
     
-
     # Initialize the optimizer
     opt = Flux.Optimise.ADAGrad(lr)
 

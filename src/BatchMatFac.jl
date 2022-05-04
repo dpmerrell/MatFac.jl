@@ -12,6 +12,7 @@ include("noise_models.jl")
 include("model.jl")
 include("update.jl")
 include("fit.jl")
+include("simulate.jl")
 
 end
 

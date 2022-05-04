@@ -37,6 +37,7 @@ function ChainRules.rrule(::typeof(loss), nn::NormalNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
 
+
     return loss, loss_normal_pullback
 end
 
@@ -84,7 +85,7 @@ end
 # Loss function
 
 function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    return - D.*log.(Z) - (1 .- D).*log.(1 .- Z)
+    return - D.*log.(Z .+ 1e-8) - (1 .- D).*log.(1 .- Z .+ 1e-8)
 end
 
 
@@ -118,6 +119,7 @@ function ChainRules.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
     function invlinkloss_bernoulli_pullback(loss_bar)
         diff = A .- D
         diff[nanvals] .= 0
+
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
                loss_bar .* diff,
@@ -126,9 +128,9 @@ function ChainRules.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
     
     res = loss(bn, A, D)
     res[nanvals] .= 0
-    result = sum(res)
 
-    return result, invlinkloss_bernoulli_pullback
+
+    return sum(res), invlinkloss_bernoulli_pullback
 end
 
 
@@ -164,7 +166,7 @@ end
 # Loss function
 
 function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    return Z .- D.*log.(Z)
+    return Z .- D.*log.(Z .+ 1e-8)
 end
 
 
@@ -173,6 +175,7 @@ function ChainRules.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
     result = loss(pn, Z, D)
     nanvals = isnan.(D)
     result[nanvals] .= 0
+
 
     function loss_poisson_pullback(loss_bar)
         Z_bar = loss_bar.*( 1 .- D ./ Z)
@@ -252,7 +255,7 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix)
     D_idx = round.(UInt8, D)
     l_thresh = on.ext_thresholds[D_idx]
     r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
-    loss = -log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z))
+    loss = -log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z) .+ 1e-8)
 
     return loss
 end
@@ -264,32 +267,41 @@ end
 
 nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
-
 function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
     nanvals = isnan.(D)
     D_idx = nanround.(D)
+    R_idx = D_idx .+ UInt8(1) 
 
-    N_bins = length(on.ext_thresholds)-1
+    sort!(on.ext_thresholds)
     l_thresh = on.ext_thresholds[D_idx]
-    r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
+    r_thresh = on.ext_thresholds[R_idx]
+
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
     sig_r[nanvals] .= 1 # These settings ensure that the missing
     sig_l[nanvals] .= 0 # data don't contribute to loss or gradients
 
+    sig_diff = sig_r .- sig_l
+
+    nanvals .= (sig_diff .== 0)
+    sig_diff[nanvals] .= 1
 
     function loss_ordinal_pullback(loss_bar)
-        on_r_bar = loss_bar .* -sig_r .* (1 .- sig_r) ./ (sig_r .- sig_l)
-        on_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ (sig_r .- sig_l)
-        on_bar = zeros(length(on.ext_thresholds))
+
+        on_r_bar = loss_bar .* -sig_r .* (1 .- sig_r) ./ sig_diff
+        on_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ sig_diff
+
+        N_bins = length(on.ext_thresholds)-1
+        on_bar = zeros(N_bins + 1)
         for i=1:N_bins
             relevant_idx = (D_idx .== i) 
             on_bar[i] += sum(on_l_bar .* relevant_idx)
             on_bar[i+1] += sum(on_r_bar .* relevant_idx)
         end
 
-        T = typeof(on.ext_thresholds) # Move to GPU if necessary 
+        T = typeof(on.ext_thresholds) # Move to GPU if necessary
+
         on_bar = Tangent{OrdinalNoise}(ext_thresholds=T(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
 
@@ -299,13 +311,13 @@ function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
     
-    loss = -log.(sig_r - sig_l)
+    loss = -log.(sig_diff .+ 1e-8)
 
     return loss, loss_ordinal_pullback
 end
 
-
-invlinkloss(on::OrdinalNoise, Z, D) = sum(loss(on, invlink(on, Z), D))
+# Remember: inverse link == identity function
+invlinkloss(on::OrdinalNoise, Z, D) = sum(loss(on, Z, D))
 
 
 function view(on::OrdinalNoise, idx)
@@ -324,7 +336,7 @@ function simulate(on::OrdinalNoise, Z, noise)
         r_thresh = on.ext_thresholds[i+1]
         valid_idx = ((l_thresh .<= Z_noise) .& (Z_noise .<= r_thresh))
         
-        result[valid_idx] .= i 
+        data[valid_idx] .= i 
     end
 
     return data

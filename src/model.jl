@@ -134,7 +134,7 @@ function save_model(filename, model)
 end
 
 function load_model(filename)
-    model = BSON.load(filename, @__MODULE__)
-    return model
+    d = BSON.load(filename, @__MODULE__)
+    return d[:model]
 end
 

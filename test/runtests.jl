@@ -1,5 +1,5 @@
 
-using BatchMatFac, Test, Flux, Zygote
+using BatchMatFac, Test, Flux, Zygote, CSV, DataFrames
 
 BMF = BatchMatFac
     
@@ -246,7 +246,7 @@ function noise_model_tests()
         ln = BMF.BernoulliNoise()
         @test BMF.invlink(ln, logistic_Z) == 0.5 .* ones(M,N)
         @test Flux.gradient(x->sum(BMF.invlink(ln, x)), logistic_Z)[1] == BMF.invlink(ln,logistic_Z).*(1 .- BMF.invlink(ln, logistic_Z))
-        @test BMF.loss(ln, BMF.invlink(ln, logistic_Z), logistic_data) == log(2.0).*ones(M,N)
+        @test isapprox(BMF.loss(ln, BMF.invlink(ln, logistic_Z), logistic_data), log(2.0).*ones(M,N), atol=1e-6)
         logistic_A = BMF.invlink(ln, logistic_Z)
         @test Flux.gradient(x->sum(BMF.loss(ln, x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N)
         @test Flux.gradient(x->BMF.invlinkloss(ln, x, logistic_data), logistic_Z)[1] == (logistic_A .- logistic_data)
@@ -257,7 +257,7 @@ function noise_model_tests()
         poisson_Z = zeros(M,N)
         pn = BMF.PoissonNoise()
         @test BMF.invlink(pn, poisson_Z) == ones(M,N)
-        @test BMF.loss(pn, BMF.invlink(pn, poisson_Z), poisson_data) == ones(M,N)
+        @test isapprox(BMF.loss(pn, BMF.invlink(pn, poisson_Z), poisson_data), ones(M,N), atol=1e-6)
         @test Flux.gradient(x->sum(BMF.loss(pn, BMF.invlink(pn, x), logistic_data)), poisson_Z)[1] == zeros(M,N)
         @test Flux.gradient(x->BMF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
 
@@ -268,8 +268,9 @@ function noise_model_tests()
                      0 0 0]
         on = BMF.OrdinalNoise([-Inf, -1, 1, Inf])
         @test BMF.invlink(on, ordinal_Z) == ordinal_Z 
-        @test BMF.loss(on, ordinal_Z, ordinal_data) == [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
-                                              -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))]
+        @test isapprox(BMF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
+                                                               -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
+                       atol=1e-6)
         thresh_grad, z_grad = Flux.gradient((noise, x)->sum(BMF.loss(noise, BMF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
         
         lgrad(lt,rt,z) = logistic(lt-z)*(1 - logistic(lt-z))/(logistic(rt-z)-logistic(lt-z))
@@ -414,6 +415,54 @@ end
 function simulate_tests()
 
     @testset "Simulation" begin
+
+        M = 20
+        N = 40
+        K = 3
+        n_col_batches = 4
+        n_row_batches = 4
+        n_logistic = div(N,n_col_batches)
+        n_ordinal = div(N,n_col_batches)
+        n_poisson = div(N,n_col_batches)
+        n_normal = div(N,n_col_batches) 
+
+        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
+        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["normal"], n_normal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["ordinal5"], n_ordinal)];
+        #model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+
+        logsigma_map = Dict("colbatch1" => log(1.0),
+                            "colbatch2" => log(2.0),
+                            "colbatch3" => log(3.0),
+                            "colbatch4" => log(4.0))
+        logsigma = map(x->logsigma_map[x], col_batches)
+
+        mu_map = Dict("colbatch1" => -3.0,
+                      "colbatch2" => 3.0,
+                      "colbatch3" => 3.0,
+                      "colbatch4" => 0.0)
+        mu = map(x->mu_map[x], col_batches)
+
+        sample_noise_map = Dict("colbatch1" => 0.0001,
+                                "colbatch2" => 3.0,
+                                "colbatch3" => 3.0,
+                                "colbatch4" => 0.0)
+        sample_noise_params = map(x->sample_noise_map[x], col_batches)
+
+        X = randn(K,M) ./ sqrt(K)
+        Y = randn(K,N)
+        sim_data = BMF.simulate(X, Y, logsigma, mu,
+                                col_batches, row_batches,
+                                0.25, col_losses, sample_noise_params)
+
+        info_df = DataFrame(convert(Matrix{Any}, permutedims(hcat(col_batches, col_losses))), :auto)
+
+        df = DataFrame(convert(Matrix{Any}, sim_data), :auto)
+        append!(info_df, df)
+        CSV.write("dumb.tsv", info_df; delim="\t")
 
         @test true
 
