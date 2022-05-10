@@ -377,6 +377,46 @@ function model_tests()
 end
 
 
+function update_tests()
+
+    @testset "Update" begin
+
+        # Array update
+        A = ones(10,10)
+        start_A = deepcopy(A)
+
+        f = x -> sum(x.^2)
+        grads = Zygote.gradient(f, A)
+        opt = Flux.Optimise.ADAGrad()
+
+        Flux.Optimise.update!(opt, A, grads[1])
+        @test !isapprox(A, start_A)
+
+        # Tuple update
+        B = (ones(10,10), ones(5,5))
+        start_B = deepcopy(B)
+        B_grad = (-ones(10,10), -ones(5,5))
+
+        Flux.Optimise.update!(opt, B, B_grad)
+        @test !isapprox(B[1], start_B[1])
+        @test !isapprox(B[2], start_B[2])
+        
+        println(B)
+
+        # NamedTuple update
+        C = (cat=ones(10,10), dog=ones(5,5))
+        start_C = deepcopy(C)
+        C_grad = (cat=-ones(10,10), dog=-ones(5,5), fish=nothing)
+
+        Flux.Optimise.update!(opt, C, C_grad)
+        @test !isapprox(C[1], start_C[1])
+        @test !isapprox(C[2], start_C[2])
+        
+        println(C)
+
+    end
+end
+
 function fit_tests()
 
     @testset "Fit" begin
@@ -397,17 +437,28 @@ function fit_tests()
                       repeat(["normal"], n_normal);
                       repeat(["poisson"], n_poisson);
                       repeat(["ordinal5"], n_ordinal)];
+        
         model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
 
         composite_data = zeros(M,N)
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
-        # Just test whether the fit! function can run to
+        X_start = deepcopy(model.mp.X)
+        Y_start = deepcopy(model.mp.Y)
+        logsigma_start = deepcopy(model.cscale.logsigma)
+        mu_start = deepcopy(model.cshift.mu)
+
+        # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbose=false, lr=0.05, max_epochs=10)
+        fit!(model, composite_data; verbose=true, lr=0.05, max_epochs=10)
         @test true
 
+        # test whether the parameters were modified
+        @test !isapprox(model.mp.X, X_start)
+        @test !isapprox(model.mp.Y, Y_start)
+        @test !isapprox(model.cshift.mu, mu_start)
+        @test !isapprox(model.cscale.logsigma, logsigma_start)
     end
 end
 
@@ -509,14 +560,15 @@ end
 
 function main()
     
-    util_tests()
-    batch_array_tests()
-    model_core_tests()
-    noise_model_tests()
-    model_tests()
+    #util_tests()
+    #batch_array_tests()
+    #model_core_tests()
+    #noise_model_tests()
+    #model_tests()
+    #update_tests()
     fit_tests()
-    simulate_tests()
-    io_tests()
+    #simulate_tests()
+    #io_tests()
 
 end
 

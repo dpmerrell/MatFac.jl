@@ -153,3 +153,5 @@ function ChainRules.rrule(::typeof(exp), ba::BatchArray)
 end
 
 
+
+

@@ -18,18 +18,22 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         end
     end
 
+    model_d = gpu(model)
     D = gpu(D)
-    model = gpu(model)
 
     M_D, N_D = size(D)
-    M = size(model.mp.X,2)
-    N = size(model.mp.Y,2)
+    K, M = size(model_d.mp.X)
+    N = size(model_d.mp.Y,2)
+
+    inv_MN = 1.0/(M*N)
+    inv_MK = 1.0/(M*K)
+    inv_NK = 1.0/(N*K)
 
     # Validate input size
     if (M != M_D)|(N != N_D) 
         throw(ArgumentError, string("Incompatible sizes! Data:", 
                                     size(D), 
-                                    "; Model: ", (M_model, N_model)
+                                    "; Model: ", (M,N)
                                    )
              )
     end
@@ -38,25 +42,25 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     col_batch_size = div(capacity,M)
 
     # Unpack regularizers
-    col_reg = (X, X_reg) -> X_reg(X)
-    col_reg_params = (model.mp.X, model.X_reg)
+    col_reg = (X, X_reg) -> inv_MK*X_reg(X)
+    col_reg_params = (model_d.mp.X, model_d.X_reg)
 
     row_reg = (Y, Y_reg,
                logsigma, logsigma_reg,
                mu, mu_reg,
                logdelta, logdelta_reg,
-               theta, theta_reg) -> (Y_reg(Y)
-                                     +logsigma_reg(logsigma)
-                                     +mu_reg(mu)
-                                     +logdelta_reg(logdelta)
-                                     +theta_reg(theta)
-                                    )
+               theta, theta_reg) -> inv_NK*(Y_reg(Y)
+                                           +logsigma_reg(logsigma)
+                                           +mu_reg(mu)
+                                           +logdelta_reg(logdelta)
+                                           +theta_reg(theta)
+                                          )
     
-    row_reg_params = (model.mp.Y, model.Y_reg,
-                      model.cscale.logsigma, model.logsigma_reg,
-                      model.cshift.mu, model.mu_reg,
-                      model.bscale.logdelta, model.logdelta_reg,
-                      model.bshift.theta, model.theta_reg)
+    row_reg_params = (model_d.mp.Y, model_d.Y_reg,
+                      model_d.cscale.logsigma, model_d.logsigma_reg,
+                      model_d.cshift.mu, model_d.mu_reg,
+                      model_d.bscale.logdelta, model_d.logdelta_reg,
+                      model_d.bshift.theta, model_d.theta_reg)
     
     # Initialize the optimizer
     opt = Flux.Optimise.ADAGrad(lr)
@@ -66,6 +70,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     loss = Inf
 
     epoch = 1
+    t_start = time()
     while epoch <= max_epochs
 
         vprint("Epoch ",epoch,":  ")
@@ -76,15 +81,13 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         # Iterate through the ROWS of data
         for row_batch in BatchIter(M,row_batch_size)
 
-            #println(string("\tROW BATCH, ", row_batch))
-
             D_v = view(D, row_batch, :)
-            model_v = view(model, row_batch, :)
+            model_d_v = view(model_d, row_batch, :)
     
             # Define some sets of parameters for convenience
-            row_loss_params = (model.mp.Y, model.cscale, model.cshift,
-                               model_v.bscale, model_v.bshift,
-                               model.noise_model)
+            row_loss_params = (model_d.mp.Y, model_d.cscale, model_d.cshift,
+                               model_d_v.bscale, model_d_v.bshift,
+                               model_d.noise_model)
           
             # Curry out the X for this batch;
             # we'll take the gradient for everything else.
@@ -93,18 +96,18 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                               csh,
                               bsc,
                               bsh,
-                              noise)-> invlinkloss(noise,
-                                         bsh(
-                                           bsc(
-                                             csh(
-                                               csc(
-                                                 transpose(model_v.mp.X)*Y
-                                                   )
-                                                 )
-                                               )
-                                             ),
-                                         D_v
-                                         )
+                              noise)-> inv_MN*invlinkloss(noise,
+                                                           bsh(
+                                                             bsc(
+                                                               csh(
+                                                                 csc(
+                                                                   transpose(model_d_v.mp.X)*Y
+                                                                     )
+                                                                   )
+                                                                 )
+                                                               ),
+                                                           D_v
+                                                           )
 
             # Update these parameters via log-likelihood gradient 
             batchloss, grads = Zygote.withgradient(row_likelihood, row_loss_params...)
@@ -117,30 +120,27 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         update!(opt, row_reg_params, reg_grads)
         loss += regloss
 
-
         ######################################
         # Iterate through the COLUMNS of data
         for col_batch in BatchIter(N,col_batch_size)
-            
-            #println(string("\tCOL BATCH, ", col_batch))
-
+           
             D_v = view(D, :, col_batch)
-            model_v = view(model, :, col_batch)
+            model_d_v = view(model_d, :, col_batch)
     
-            col_loss_params = (model.mp.X,)
+            col_loss_params = (model_d.mp.X,)
 
-            col_likelihood = (X,) -> invlinkloss(model_v.noise_model,
-                                       model_v.bshift(
-                                         model_v.bscale(
-                                           model_v.cshift(
-                                             model_v.cscale(
-                                               transpose(transpose(model_v.mp.Y)*X)
-                                                            )
-                                                          )
-                                                        )
-                                                      ),
-                                                  D_v
-                                                  )
+            col_likelihood = (X,) -> inv_MN*invlinkloss(model_d_v.noise_model,
+                                                         model_d_v.bshift(
+                                                           model_d_v.bscale(
+                                                             model_d_v.cshift(
+                                                               model_d_v.cscale(
+                                                                 transpose(transpose(model_d_v.mp.Y)*X)
+                                                                              )
+                                                                            )
+                                                                          )
+                                                                        ),
+                                                                    D_v
+                                                                    )
 
             batchloss, grads = Zygote.withgradient(col_likelihood, col_loss_params...)
             update!(opt, col_loss_params, grads)
@@ -154,7 +154,8 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         loss += regloss
 
         # Report the loss
-        vprint("Loss=",loss, "\n")
+        elapsed = time()-t_start
+        vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n")
 
         # Check termination conditions
         loss_diff = prev_loss - loss 
@@ -169,9 +170,14 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             epoch += 1
         end
     end
-    println(string("Terminated: reached max_epochs=",max_epochs))
+    if epoch >= max_epochs 
+        println(string("Terminated: reached max_epochs=",max_epochs))
+    end
 
-    model = cpu(model)
+    # Make sure the model gets updated with the trained values
+    for pname in propertynames(model_d)
+        setproperty!(model, pname, cpu(getproperty(model_d, pname)))
+    end
 end
 
 

@@ -28,17 +28,5 @@ function update!(opt::Optimiser, params::Any, grads::NamedTuple)
 end
 
 
-#function update!(opt::Optimiser, 
-
-#function update!(opt, param::BatchArray, grads::B
-
-#function update!(opt, params, grads::Vector{Vector})
-#    for (p,g) in zip(params, grads)
-#        if g != nothing
-#            update!(opt, p, g)
-#        end
-#    end
-#end
-
 
 
