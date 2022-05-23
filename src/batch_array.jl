@@ -1,5 +1,6 @@
 
 import Base: view, zero, exp
+import Flux: gpu, trainable
 
 mutable struct BatchArray
     col_ranges::Tuple # UnitRanges
@@ -11,10 +12,12 @@ mutable struct BatchArray
     values::Tuple # vectors of numbers
 end
 
-# The values should not be moved to GPU
+# Make it a functor -- however, the values
+# should not be moved to GPU
 # (they need to be scalar-indexable)
 @functor BatchArray (col_ranges, row_idx, row_batches)
 
+rec_trainable(ba::BatchArray) = (values=ba.values,)
 
 function BatchArray(col_batch_ids::Vector, row_batch_ids, 
                     value_dicts::Vector{<:AbstractDict})
@@ -70,7 +73,7 @@ function Base.:(+)(A::AbstractMatrix, B::BatchArray)
 end
 
 
-function ChainRules.rrule(::typeof(+), A::AbstractMatrix, B::BatchArray)
+function ChainRulesCore.rrule(::typeof(+), A::AbstractMatrix, B::BatchArray)
     
     result = A + B
     
@@ -106,7 +109,7 @@ function Base.:(*)(A::AbstractMatrix, B::BatchArray)
 end
 
 
-function ChainRules.rrule(::typeof(*), A::AbstractMatrix, B::BatchArray)
+function ChainRulesCore.rrule(::typeof(*), A::AbstractMatrix, B::BatchArray)
     
     result = A * B
     
@@ -139,7 +142,7 @@ function exp(ba::BatchArray)
 end
 
 
-function ChainRules.rrule(::typeof(exp), ba::BatchArray)
+function ChainRulesCore.rrule(::typeof(exp), ba::BatchArray)
     
     Z = exp(ba)
 

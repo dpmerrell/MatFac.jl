@@ -10,7 +10,11 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
               capacity::Integer=Integer(1e8), 
               max_epochs=1000, lr=0.01, abs_tol=1e-9, rel_tol=1e-6,
               verbose=false)
-
+    
+    #############################
+    # Preparations
+    #############################
+    
     # Define a verbose-print
     function vprint(a...)
         if verbose
@@ -22,8 +26,8 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     D = gpu(D)
 
     M_D, N_D = size(D)
-    K, M = size(model_d.mp.X)
-    N = size(model_d.mp.Y,2)
+    K, M = size(model_d.X)
+    N = size(model_d.Y,2)
 
     inv_MN = 1.0/(M*N)
     inv_MK = 1.0/(M*K)
@@ -38,30 +42,42 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
              )
     end
 
-    row_batch_size = div(capacity,N)
-    col_batch_size = div(capacity,M)
+    col_batch_size = div(capacity,N)
+    row_batch_size = div(capacity,M)
 
-    # Unpack regularizers
-    col_reg = (X, X_reg) -> inv_MK*X_reg(X)
-    col_reg_params = (model_d.mp.X, model_d.X_reg)
+    # Prep the row and column transformations 
+    col_layers = make_viewable(model_d.col_transform)
+    row_layers = make_viewable(model_d.row_transform)
 
-    row_reg = (Y, Y_reg,
-               logsigma, logsigma_reg,
-               mu, mu_reg,
-               logdelta, logdelta_reg,
-               theta, theta_reg) -> inv_NK*(Y_reg(Y)
-                                           +logsigma_reg(logsigma)
-                                           +mu_reg(mu)
-                                           +logdelta_reg(logdelta)
-                                           +theta_reg(theta)
-                                          )
-    
-    row_reg_params = (model_d.mp.Y, model_d.Y_reg,
-                      model_d.cscale.logsigma, model_d.logsigma_reg,
-                      model_d.cshift.mu, model_d.mu_reg,
-                      model_d.bscale.logdelta, model_d.logdelta_reg,
-                      model_d.bshift.theta, model_d.theta_reg)
-    
+    # Define the likelihood function
+    likelihood = (X,Y,
+                  r_layers,
+                  c_layers,
+                  noise, D)-> inv_MN*invlinkloss(noise, 
+                                                  c_layers(
+                                                   r_layers(
+                                                    transpose(X)*Y
+                                                   )
+                                                  ),
+                                               D)
+
+
+    # Prep the regularizers
+    col_layer_regs = make_viewable(model_d.col_transform_reg)
+    row_layer_regs = make_viewable(model_d.row_transform_reg)
+   
+    col_regularizer = (layers, reg) -> inv_NK*reg(layers)
+    row_regularizer = (layers, reg) -> inv_MK*reg(layers)
+    X_regularizer = (X, reg) -> inv_MK*reg(X)
+    Y_regularizer = (Y, reg) -> inv_NK*reg(Y)
+
+    # Initialize some objects to store gradients
+    Y_grad = zero(model_d.Y)
+    X_grad = zero(model_d.X)
+    col_layer_grads = fmapstructure(zero, rec_trainable(col_layers))
+    row_layer_grads = fmapstructure(zero, rec_trainable(row_layers))
+    noise_model_grads = fmap(zero, rec_trainable(model_d.noise_model))
+
     # Initialize the optimizer
     opt = Flux.Optimise.ADAGrad(lr)
 
@@ -69,89 +85,107 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     prev_loss = Inf
     loss = Inf
 
+    #############################
+    # Main loop 
+    #############################
     epoch = 1
     t_start = time()
     while epoch <= max_epochs
 
-        vprint("Epoch ",epoch,":  ")
+        vprint("Epoch ", epoch,":  ")
 
         loss = 0.0
 
+        Y_grad .= 0
+        col_layer_grads = fmap(zero, col_layer_grads)
+        noise_model_grads = fmap(zero, noise_model_grads)
+
         ######################################
         # Iterate through the ROWS of data
-        for row_batch in BatchIter(M,row_batch_size)
+        for row_batch in BatchIter(M, row_batch_size)
 
+            X_view = view(model_d.X, :, row_batch)
             D_v = view(D, row_batch, :)
-            model_d_v = view(model_d, row_batch, :)
-    
-            # Define some sets of parameters for convenience
-            row_loss_params = (model_d.mp.Y, model_d.cscale, model_d.cshift,
-                               model_d_v.bscale, model_d_v.bshift,
-                               model_d.noise_model)
-          
-            # Curry out the X for this batch;
-            # we'll take the gradient for everything else.
-            row_likelihood = (Y,
-                              csc,
-                              csh,
-                              bsc,
-                              bsh,
-                              noise)-> inv_MN*invlinkloss(noise,
-                                                           bsh(
-                                                             bsc(
-                                                               csh(
-                                                                 csc(
-                                                                   transpose(model_d_v.mp.X)*Y
-                                                                     )
-                                                                   )
-                                                                 )
-                                                               ),
-                                                           D_v
-                                                           )
+            row_layers_view = view(row_layers, row_batch, 1:N)
 
-            # Update these parameters via log-likelihood gradient 
-            batchloss, grads = Zygote.withgradient(row_likelihood, row_loss_params...)
-            update!(opt, row_loss_params, grads)
+            # Define the likelihood for this batch
+            col_likelihood = (Y, cl, noise) -> likelihood(X_view, Y, 
+                                                          row_layers_view, cl, 
+                                                          noise, D_v)
+
+            # Accumulate the gradient 
+            batchloss, grads = Zygote.withgradient(col_likelihood, 
+                                                   model_d.Y,
+                                                   col_layers,
+                                                   model_d.noise_model)
+            
+            binop!(.+, Y_grad, grads[1])
+            binop!(.+, col_layer_grads, grads[2])
+            binop!(.+, noise_model_grads, grads[3])
 
             loss += batchloss
+
         end
-        # Apply regularizer gradients to Y, sigma, mu, etc.
-        regloss, reg_grads = Zygote.withgradient(row_reg, row_reg_params...)
-        update!(opt, row_reg_params, reg_grads)
+
+        # Accumulate Y regularizer gradient
+        regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model_d.Y, model_d.Y_reg)
         loss += regloss
+        binop!(.+, Y_grad, Y_reg_grad[1])
+        
+        # Update Y and the Y regularizer
+        update!(opt, model_d.Y, Y_grad)
+        update!(opt, model_d.Y_reg, Y_reg_grad[2])
+
+        # Accumulate layer regularizer gradients
+        regloss, reg_grads = Zygote.withgradient(col_regularizer, col_layers, col_layer_regs)
+        loss += regloss
+        binop!(.+, col_layer_grads, reg_grads[1])
+        
+        # Update layers and layer regularizers
+        update!(opt, col_layers, col_layer_grads)
+        update!(opt, col_layer_regs, reg_grads[2])
+
+        X_grad .= 0
+        row_layer_grads = fmap(zero, row_layer_grads)
 
         ######################################
         # Iterate through the COLUMNS of data
-        for col_batch in BatchIter(N,col_batch_size)
-           
+        for col_batch in BatchIter(N, col_batch_size)
+          
             D_v = view(D, :, col_batch)
-            model_d_v = view(model_d, :, col_batch)
-    
-            col_loss_params = (model_d.mp.X,)
+            noise_view = view(model_d.noise_model, 1:M)
+            Y_view = view(model_d.Y, :, col_batch)
 
-            col_likelihood = (X,) -> inv_MN*invlinkloss(model_d_v.noise_model,
-                                                         model_d_v.bshift(
-                                                           model_d_v.bscale(
-                                                             model_d_v.cshift(
-                                                               model_d_v.cscale(
-                                                                 transpose(transpose(model_d_v.mp.Y)*X)
-                                                                              )
-                                                                            )
-                                                                          )
-                                                                        ),
-                                                                    D_v
-                                                                    )
+            col_layers_view = view(col_layers, 1:M, col_batch)
 
-            batchloss, grads = Zygote.withgradient(col_likelihood, col_loss_params...)
-            update!(opt, col_loss_params, grads)
+            row_likelihood = (X, rl) -> likelihood(X, Y_view, 
+                                                   rl, col_layers_view, 
+                                                   noise_view, D_v)
+
+            batchloss, g = Zygote.withgradient(row_likelihood, model_d.X, row_layers)
+            binop!(.+, X_grad, g[1])
+            binop!(.+, row_layer_grads, g[2])
         
             loss += batchloss
         end
 
-        # Apply regularizer gradients to X 
-        regloss, reg_grads = Zygote.withgradient(col_reg, col_reg_params...)
-        update!(opt, col_reg_params, reg_grads)
+        # Accumulate X regularizer gradients
+        regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model_d.X, model_d.X_reg)
         loss += regloss
+        binop!(.+, X_grad, X_reg_grads[1])
+
+        # Update X and the X regularizer
+        update!(opt, model_d.X, X_grad)
+        update!(opt, model_d.X_reg, X_reg_grads[2])
+
+        # Accumulate the layer regularizer gradients
+        regloss, reg_grads = Zygote.withgradient(row_regularizer, row_layers, row_layer_regs)
+        loss += regloss
+        binop!(.+, row_layer_grads, reg_grads[1])
+
+        # Update the layers and regularizers
+        update!(opt, row_layers, row_layer_grads)
+        update!(opt, row_layer_regs, reg_grads[2])
 
         # Report the loss
         elapsed = time()-t_start
@@ -174,10 +208,16 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         println(string("Terminated: reached max_epochs=",max_epochs))
     end
 
+    #############################
+    # Termination
+    #############################
+
     # Make sure the model gets updated with the trained values
     for pname in propertynames(model_d)
         setproperty!(model, pname, cpu(getproperty(model_d, pname)))
     end
+
+    return model
 end
 
 

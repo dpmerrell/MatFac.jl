@@ -150,9 +150,9 @@ function batch_array_tests()
 end
 
 
-function model_core_tests()
+function layers_tests()
 
-    @testset "Model Core" begin
+    @testset "Layers" begin
 
         M = 20
         N = 30
@@ -163,19 +163,25 @@ function model_core_tests()
         n_col_batches = 2
         n_row_batches = 4
 
-        ###################################
-        # Matrix Product layer
-        mp = BMF.MatProd(M,N,K)
-        @test size(mp.X) == (K,M)
-        @test size(mp.Y) == (K,N)
-        xy = mp()
-        @test xy == transpose(mp.X)*mp.Y
+        ####################################
+        ## Matrix Product layer
+        #mp = BMF.MatProd(M,N,K)
+        #@test size(mp.X) == (K,M)
+        #@test size(mp.Y) == (K,N)
+        #xy = mp()
+        X = randn(K,M)
+        Y = randn(K,N)
+        xy = transpose(X)*Y
+        #@test xy == transpose(mp.X)*mp.Y
 
-        mp_view = view(mp, :, 1:view_N)
-        @test size(mp_view.X) == (K,M)
-        @test size(mp_view.Y) == (K,10)
-        view_xy = mp_view()
-        @test view_xy == transpose(mp.X)*mp.Y[:,1:10]
+        #mp_view = view(mp, :, 1:view_N)
+        #@test size(mp_view.X) == (K,M)
+        #@test size(mp_view.Y) == (K,10)
+        #view_xy = mp_view()
+        X_view = view(X,:,1:M)
+        Y_view = view(Y,:,1:view_N)
+        view_xy = transpose(X_view)*Y_view
+        #@test view_xy == transpose(mp.X)*mp.Y[:,1:10]
         
         ###################################
         # Column Scale
@@ -183,7 +189,7 @@ function model_core_tests()
         @test size(cscale.logsigma) == (N,)
         @test cscale(xy) == xy .* transpose(exp.(cscale.logsigma))
         
-        cscale_view = view(cscale,1:view_N)
+        cscale_view = view(cscale, 1:M, 1:view_N)
         @test cscale_view(view_xy) == view_xy .* transpose(exp.(cscale.logsigma[1:view_N]))
 
         ###################################
@@ -192,7 +198,7 @@ function model_core_tests()
         @test size(cshift.mu) == (N,)
         @test cshift(xy) == xy .+ transpose(cshift.mu)
         
-        cshift_view = view(cshift,1:view_N)
+        cshift_view = view(cshift, 1:M, 1:view_N)
         @test cshift_view(view_xy) == view_xy .+ transpose(cshift.mu[1:view_N])
 
         ##################################
@@ -360,18 +366,18 @@ function model_tests()
 
         model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
 
-        @test size(model.mp.X) == (K,M)
+        @test size(model.X) == (K,M)
         @test map(typeof, model.noise_model.noises) == (BMF.BernoulliNoise, BMF.OrdinalNoise, BMF.PoissonNoise, BMF.NormalNoise)
         @test size(model()) == (M,N)
         @test size(model) == (M,N)
 
         # GPU
         model_d = gpu(model)
-        @test isapprox(model_d.mp(), gpu(model.mp()))
-        @test isapprox(model_d.cscale.logsigma, gpu(model.cscale.logsigma))
-        @test isapprox(model_d.cshift.mu, gpu(model.cshift.mu))
-        @test all(map(isapprox, model_d.bscale.logdelta.values, model.bscale.logdelta.values))
-        @test all(map(isapprox, model_d.bshift.theta.values, model.bshift.theta.values))
+        @test isapprox(transpose(model_d.X)*model_d.Y, gpu(transpose(model.X)*model.Y))
+        @test isapprox(model_d.col_transform.cscale.logsigma, gpu(model.col_transform.cscale.logsigma))
+        @test isapprox(model_d.col_transform.cshift.mu, gpu(model.col_transform.cshift.mu))
+        @test all(map(isapprox, model_d.col_transform.bscale.logdelta.values, model.col_transform.bscale.logdelta.values))
+        @test all(map(isapprox, model_d.col_transform.bshift.theta.values, model.col_transform.bshift.theta.values))
         @test isapprox(model_d(), gpu(model()))
     end
 end
@@ -401,8 +407,6 @@ function update_tests()
         @test !isapprox(B[1], start_B[1])
         @test !isapprox(B[2], start_B[2])
         
-        println(B)
-
         # NamedTuple update
         C = (cat=ones(10,10), dog=ones(5,5))
         start_C = deepcopy(C)
@@ -412,8 +416,6 @@ function update_tests()
         @test !isapprox(C[1], start_C[1])
         @test !isapprox(C[2], start_C[2])
         
-        println(C)
-
     end
 end
 
@@ -444,21 +446,25 @@ function fit_tests()
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
-        X_start = deepcopy(model.mp.X)
-        Y_start = deepcopy(model.mp.Y)
-        logsigma_start = deepcopy(model.cscale.logsigma)
-        mu_start = deepcopy(model.cshift.mu)
+        X_start = deepcopy(model.X)
+        Y_start = deepcopy(model.Y)
+        logsigma_start = deepcopy(model.col_transform.cscale.logsigma)
+        mu_start = deepcopy(model.col_transform.cshift.mu)
+        delta_start = deepcopy(model.col_transform.bscale.logdelta.values)
+        theta_start = deepcopy(model.col_transform.bshift.theta.values)
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbose=true, lr=0.05, max_epochs=10)
+        fit!(model, composite_data; verbose=false, lr=0.05, max_epochs=10)
         @test true
 
         # test whether the parameters were modified
-        @test !isapprox(model.mp.X, X_start)
-        @test !isapprox(model.mp.Y, Y_start)
-        @test !isapprox(model.cshift.mu, mu_start)
-        @test !isapprox(model.cscale.logsigma, logsigma_start)
+        @test !isapprox(model.X, X_start)
+        @test !isapprox(model.Y, Y_start)
+        @test !isapprox(model.col_transform.cshift.mu, mu_start)
+        @test !isapprox(model.col_transform.cscale.logsigma, logsigma_start)
+        @test all(map((u,v)->!isapprox(u,v), delta_start, model.col_transform.bscale.logdelta.values))
+        @test all(map((u,v)->!isapprox(u,v), theta_start, model.col_transform.bshift.theta.values))
     end
 end
 
@@ -550,7 +556,8 @@ function io_tests()
 
         new_model = BMF.load_model(test_bson_path)
 
-        @test new_model.mp.X == model.mp.X
+        @test new_model.X == model.X
+        @test new_model.Y == model.Y
         @test new_model.noise_model.noises[4].ext_thresholds == model.noise_model.noises[4].ext_thresholds
 
         rm(test_bson_path)
@@ -560,15 +567,15 @@ end
 
 function main()
     
-    #util_tests()
-    #batch_array_tests()
-    #model_core_tests()
-    #noise_model_tests()
-    #model_tests()
-    #update_tests()
+    util_tests()
+    batch_array_tests()
+    layers_tests()
+    noise_model_tests()
+    model_tests()
+    update_tests()
     fit_tests()
     #simulate_tests()
-    #io_tests()
+    io_tests()
 
 end
 

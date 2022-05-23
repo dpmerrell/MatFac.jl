@@ -3,7 +3,6 @@
 import Base: view
 
 
-
 #########################################################
 # Normal noise model
 #########################################################
@@ -22,7 +21,7 @@ function loss(::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(loss), nn::NormalNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
 
     nanvals = isnan.(D)
     diff = (Z .- D)
@@ -68,7 +67,7 @@ function invlink(bn::BernoulliNoise, A::AbstractMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(invlink), bn::BernoulliNoise, A)
+function ChainRulesCore.rrule(::typeof(invlink), bn::BernoulliNoise, A)
 
     Z = invlink(bn, A)
 
@@ -89,7 +88,7 @@ function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
     
     nanvals = isnan.(D)
     result = loss(bn,Z,D)
@@ -111,7 +110,7 @@ end
 invlinkloss(bn::BernoulliNoise, Z, D) = sum(loss(bn, invlink(bn, Z), D))
 
 
-function ChainRules.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
 
     nanvals = isnan.(D) # Handle missing values
     A = invlink(bn, Z)
@@ -170,7 +169,7 @@ function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix)
 end
 
 
-function ChainRules.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
     
     result = loss(pn, Z, D)
     nanvals = isnan.(D)
@@ -193,7 +192,7 @@ end
 invlinkloss(pn::PoissonNoise, Z, D) = loss(pn, invlink(pn, Z), D)
 
 
-function ChainRules.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
 
     nanvals = isnan.(D)
     A = invlink(pn, Z)
@@ -267,7 +266,7 @@ end
 
 nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
-function ChainRules.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
     nanvals = isnan.(D)
     D_idx = nanround.(D)
@@ -357,6 +356,9 @@ end
 
 @functor CompositeNoise
 
+trainable(cn::CompositeNoise) = (noises=cn.noises,)
+
+
 function CompositeNoise(noise_model_ids::Vector{String})
     
     unq_ids = unique(noise_model_ids)
@@ -395,7 +397,7 @@ invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, A[:,rng]), cn.nois
 loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, Z[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges)...)
 invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, A[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges))
 
-function ChainRules.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
 
     result = 0
     pullbacks = []
