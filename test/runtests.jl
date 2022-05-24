@@ -113,13 +113,13 @@ function batch_array_tests()
         @test ba_d_view.col_ranges == (1:2, 3:4)
         @test ba_d_view.row_batches == ba_d.row_batches[1:2]
         @test ba_d_view.row_idx == ba_d.row_idx[2:4]
-        @test ba_d_view.values == ([3.14, 2.7],[0.0,0.5])
+        @test ba_d_view.values == (gpu([3.14, 2.7]),gpu([0.0,0.5]))
 
         # zero 
         ba_d_zero = zero(ba_d)
         @test ba_d_zero.col_ranges == ba_d.col_ranges
         @test ba_d_zero.row_batches == ba_d.row_batches
-        @test ba_d_zero.values == ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
+        @test ba_d_zero.values == map(gpu, ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0]))
 
         # addition
         A_d = gpu(A)
@@ -128,22 +128,22 @@ function batch_array_tests()
         @test Z_d == test_mat_d
         (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A_d, ba_d)
         @test A_grad == gpu(ones(size(A)...))
-        @test ba_grad.values == ([9., 6.], [4., 6.], [4., 1.])
+        @test ba_grad.values == map(gpu, ([9., 6.], [4., 6.], [4., 1.]))
 
         # multiplication
         Z_d = gpu(ones(5,6)) * ba_d
         @test Z_d == test_mat_d
         (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), gpu(ones(5,6)), ba_d)
         @test A_grad == Z_d
-        @test ba_grad.values == ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0])
+        @test ba_grad.values == map(gpu, ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0]))
 
         # exponentiation
         ba_d_exp = exp(ba_d)
         @test isapprox((gpu(ones(5,6)) * ba_d_exp), exp.(test_mat_d))
         (ba_grad,) = Zygote.gradient(x->sum(gpu(ones(5,6)) * exp(x)), ba_d)
-        @test ba_grad.values == ([9. * exp(3.14), 6. * exp(2.7)],
-                                 [4. * exp(0.0), 6. * exp(0.5)],
-                                 [4. * exp(-1.0), 1. * exp(1.0)])
+        @test all(map(isapprox, ba_grad.values, map(gpu, ([9. * exp(3.14), 6. * exp(2.7)],
+                                                          [4. * exp(0.0), 6. * exp(0.5)],
+                                                          [4. * exp(-1.0), 1. * exp(1.0)]))))
 
 
     end
@@ -211,7 +211,7 @@ function layers_tests()
         @test bscale(xy)[1:div(M,n_row_batches),1:div(N,n_col_batches)] == xy[1:div(M,n_row_batches),1:div(N,n_col_batches)] .* exp(bscale.logdelta.values[1][1])
 
         bscale_grads = Zygote.gradient((f,x)->sum(f(x)), bscale, xy)
-        @test bscale_grads[1].logdelta.values[end][end] == sum(xy[16:20,16:30].*exp(bscale.logdelta.values[end][end]))
+        @test isapprox(bscale_grads[1].logdelta.values[end][end], sum(xy[16:20,16:30].*exp(bscale.logdelta.values[end][end])))
         @test bscale_grads[2] == zeros(M,N) + exp(bscale.logdelta)
 
         ##################################
@@ -323,7 +323,7 @@ function noise_model_tests()
         test_grad_Z[:,11:20] .= 0.5
         test_grad_ordinal = [0.0, 200.0*logistic(-0.5)*(1 - logistic(-0.5))/(logistic(0.5) - logistic(-0.5)),
                              -200.0*logistic(0.5)*(1 - logistic(0.5))/(logistic(0.5) - logistic(-0.5)) ,0.0]
-        @test grad_Z == test_grad_Z
+        @test isapprox(grad_Z, test_grad_Z)
         @test isapprox(grad_cn.noises[4].ext_thresholds, test_grad_ordinal) 
                                                          
 
@@ -376,8 +376,8 @@ function model_tests()
         @test isapprox(transpose(model_d.X)*model_d.Y, gpu(transpose(model.X)*model.Y))
         @test isapprox(model_d.col_transform.cscale.logsigma, gpu(model.col_transform.cscale.logsigma))
         @test isapprox(model_d.col_transform.cshift.mu, gpu(model.col_transform.cshift.mu))
-        @test all(map(isapprox, model_d.col_transform.bscale.logdelta.values, model.col_transform.bscale.logdelta.values))
-        @test all(map(isapprox, model_d.col_transform.bshift.theta.values, model.col_transform.bshift.theta.values))
+        @test all(map(isapprox, cpu(model_d.col_transform.bscale.logdelta.values), cpu(model.col_transform.bscale.logdelta.values)))
+        @test all(map(isapprox, cpu(model_d.col_transform.bshift.theta.values), cpu(model.col_transform.bshift.theta.values)))
         @test isapprox(model_d(), gpu(model()))
     end
 end
@@ -455,7 +455,7 @@ function fit_tests()
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbose=false, lr=0.05, max_epochs=10)
+        fit!(model, composite_data; verbose=true, lr=0.05, max_epochs=10)
         @test true
 
         # test whether the parameters were modified

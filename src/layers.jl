@@ -1,33 +1,8 @@
 
-# TODO: WRITE RRULES FOR THE FUNCTORS
 
 import Base: view
 
-##################################
-# Matrix Product
-mutable struct MatProd
-    X::AbstractMatrix
-    Y::AbstractMatrix
-end
-
-@functor MatProd
-
-function MatProd(M::Int, N::Int, K::Int)
-    X = randn(K,M) .* .01 / sqrt(K)
-    Y = randn(K,N) .* .01
-    return MatProd(X,Y)
-end
-
-
-function (m::MatProd)()
-    return transpose(m.X)*m.Y
-end
-
-
-function view(m::MatProd, idx1, idx2)
-    return MatProd(view(m.X,:,idx1),
-                   view(m.Y,:,idx2))
-end
+export BatchMatFacLayers 
 
 
 ##################################
@@ -206,6 +181,10 @@ mutable struct BatchMatFacLayers
 end
 
 @functor BatchMatFacLayers
+
+trainable(l::BatchMatFacLayers) = (cscale=l.cscale, cshift=l.cshift, 
+                                   bscale=l.bscale, bshift=l.bshift)
+
 
 function (bmf::BatchMatFacLayers)(Z::AbstractMatrix)
     return bmf.bshift(

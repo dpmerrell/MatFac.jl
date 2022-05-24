@@ -12,10 +12,7 @@ mutable struct BatchArray
     values::Tuple # vectors of numbers
 end
 
-# Make it a functor -- however, the values
-# should not be moved to GPU
-# (they need to be scalar-indexable)
-@functor BatchArray (col_ranges, row_idx, row_batches)
+@functor BatchArray
 
 rec_trainable(ba::BatchArray) = (values=ba.values,)
 
@@ -64,11 +61,18 @@ end
 function Base.:(+)(A::AbstractMatrix, B::BatchArray)
 
     result = copy(A)
-    for (j,cbr) in enumerate(B.col_ranges)
-        for i=1:length(B.values[j])
-            result[:,cbr] .+= (B.row_batches[j][B.row_idx,i].*B.values[j][i])
-        end
+    col_buffer = similar(A, size(A,1))
+
+    for (j,cr) in enumerate(B.col_ranges)
+        col_buffer .= view(B.row_batches[j], B.row_idx, :) * B.values[j]
+        view(result, :, cr) .+= col_buffer
+        #for i=1:length(B.values[j])
+        #    col_buffer .= view(B.row_batches[j], B.row_idx, i).*B.values[j][i]
+        #    view(result, :, cr) .+= col_buffer 
+        #end
     end
+
+    col_buffer = nothing
     return result
 end
 
@@ -83,9 +87,10 @@ function ChainRulesCore.rrule(::typeof(+), A::AbstractMatrix, B::BatchArray)
         values_bar = map(zero, B.values) # Just sum the result tangents corresponding
                                          # to each value of B
         for (j, cbr) in enumerate(B.col_ranges)
-            for i=1:length(B.values[j])
-                values_bar[j][i] = sum(result_bar[B.row_batches[j][B.row_idx,i], cbr])
-            end
+            values_bar[j] .= vec(sum(transpose(view(B.row_batches[j], B.row_idx, :)) * view(result_bar,:,cbr); dims=2)) 
+            #for i=1:length(B.values[j])
+            #    values_bar[j][i] = sum(view(result_bar, view(B.row_batches[j], B.row_idx, i), cbr))
+            #end
         end
         B_bar = Tangent{BatchArray}(values=values_bar)
         return ChainRulesCore.NoTangent(), A_bar, B_bar 
@@ -101,9 +106,10 @@ function Base.:(*)(A::AbstractMatrix, B::BatchArray)
 
     result = copy(A)
     for (j,cbr) in enumerate(B.col_ranges)
-        for i=1:length(B.values[j])
-            result[B.row_batches[j][B.row_idx,i], cbr] .*= B.values[j][i]
-        end
+        view(result, :, cbr) .*= (view(B.row_batches[j], B.row_idx, :)*B.values[j])
+        #for i=1:length(B.values[j])
+        #    view(result, view(B.row_batches[j], B.row_idx, i), cbr) .*= B.values[j][i]
+        #end
     end
     return result
 end
@@ -114,15 +120,16 @@ function ChainRulesCore.rrule(::typeof(*), A::AbstractMatrix, B::BatchArray)
     result = A * B
     
     function ba_mult_pullback(result_bar)
-        A_bar = (result_bar .+ zero(A)) * B # result tangent multiplied by B
-        values_bar = map(zero, B.values) # Just sum the (result_tangents.*A_entries) corresponding
-                                         # to each value of B
+        A_bar = (result_bar .+ zero(A)) * B 
+        values_bar = map(zero, B.values)    
 
         for (j, cbr) in enumerate(B.col_ranges)
-            for i=1:length(B.values[j])
-                rbatch = B.row_batches[j][B.row_idx,i]
-                values_bar[j][i] = sum(result_bar[rbatch,cbr] .* A[rbatch,cbr])
-            end
+            view(A, :, cbr) .*= view(result_bar, :, cbr)
+            values_bar[j] .= vec(sum(transpose(view(B.row_batches[j], B.row_idx, :)) * view(A, :, cbr); dims=2)) 
+            #for i=1:length(B.values[j])
+            #    rbatch = B.row_batches[j][B.row_idx,i]
+            #    values_bar[j][i] = sum(view(result_bar, rbatch, cbr) .* view(A, rbatch, cbr))
+            #end
         end
         B_bar = Tangent{BatchArray}(values=values_bar)
         return ChainRulesCore.NoTangent(), A_bar, B_bar 

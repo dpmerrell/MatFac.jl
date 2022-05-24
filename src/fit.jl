@@ -6,10 +6,19 @@ import ScikitLearnBase: fit!
 export fit!
 
 
+function struct_summary(obj; name="", depth=0)
+
+    str = string("\t"^depth, name, " ", typeof(obj), "\n")
+    for pname in propertynames(obj)
+        str *= struct_summary(getproperty(obj, pname); name=pname, depth=depth+1)
+    end
+    return str
+end
+
 function fit!(model::BatchMatFacModel, D::AbstractMatrix;
               capacity::Integer=Integer(1e8), 
               max_epochs=1000, lr=0.01, abs_tol=1e-9, rel_tol=1e-6,
-              verbose=false)
+              verbose=true)
     
     #############################
     # Preparations
@@ -61,7 +70,6 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                                   ),
                                                D)
 
-
     # Prep the regularizers
     col_layer_regs = make_viewable(model_d.col_transform_reg)
     row_layer_regs = make_viewable(model_d.row_transform_reg)
@@ -107,18 +115,19 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
             X_view = view(model_d.X, :, row_batch)
             D_v = view(D, row_batch, :)
             row_layers_view = view(row_layers, row_batch, 1:N)
+            col_layers_view = view(col_layers, row_batch, 1:N)
 
             # Define the likelihood for this batch
             col_likelihood = (Y, cl, noise) -> likelihood(X_view, Y, 
                                                           row_layers_view, cl, 
                                                           noise, D_v)
 
-            # Accumulate the gradient 
+            # Accumulate the gradient
             batchloss, grads = Zygote.withgradient(col_likelihood, 
                                                    model_d.Y,
-                                                   col_layers,
+                                                   col_layers_view,
                                                    model_d.noise_model)
-            
+    
             binop!(.+, Y_grad, grads[1])
             binop!(.+, col_layer_grads, grads[2])
             binop!(.+, noise_model_grads, grads[3])
@@ -153,16 +162,17 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         for col_batch in BatchIter(N, col_batch_size)
           
             D_v = view(D, :, col_batch)
-            noise_view = view(model_d.noise_model, 1:M)
+            noise_view = view(model_d.noise_model, col_batch)
             Y_view = view(model_d.Y, :, col_batch)
 
+            row_layers_view = view(row_layers, 1:M, col_batch)
             col_layers_view = view(col_layers, 1:M, col_batch)
 
             row_likelihood = (X, rl) -> likelihood(X, Y_view, 
                                                    rl, col_layers_view, 
                                                    noise_view, D_v)
 
-            batchloss, g = Zygote.withgradient(row_likelihood, model_d.X, row_layers)
+            batchloss, g = Zygote.withgradient(row_likelihood, model_d.X, row_layers_view)
             binop!(.+, X_grad, g[1])
             binop!(.+, row_layer_grads, g[2])
         
@@ -171,6 +181,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
 
         # Accumulate X regularizer gradients
         regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model_d.X, model_d.X_reg)
+
         loss += regloss
         binop!(.+, X_grad, X_reg_grads[1])
 

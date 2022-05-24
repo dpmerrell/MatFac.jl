@@ -17,7 +17,9 @@ end
 
 function loss(::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
     diff = (Z .- D)
-    return 0.5 .* diff .* diff
+    diff .*= diff
+    diff .*= 0.5
+    return diff
 end
 
 
@@ -27,6 +29,7 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
     diff = (Z .- D)
     diff[nanvals] .= 0
     loss = diff.*diff
+    loss .*= 0.5
 
     function loss_normal_pullback(loss_bar)
         Z_bar = loss_bar .* diff
@@ -59,7 +62,28 @@ end
 mutable struct BernoulliNoise end
 
 # inverse link function
-sigmoid(x) = 1 ./ (1 .+ exp.(-x))
+#sigmoid(x) = 1 ./ (1 .+ exp.(-x))
+function sigmoid(x)
+    y = -x
+    y .= exp.(y)
+    y .+= 1
+    y .= (1 ./ y)
+    return y
+end
+
+function ChainRulesCore.rrule(::typeof(sigmoid), x)
+    
+    y = sigmoid(x)
+
+    function sigmoid_pullback(y_bar)
+        x_bar = 1 .- y
+        x_bar .*= y
+        x_bar .*= y_bar
+        return ChainRulesCore.NoTangent(), x_bar
+    end
+
+    return y, sigmoid_pullback
+end
 
 
 function invlink(bn::BernoulliNoise, A::AbstractMatrix)
@@ -67,24 +91,21 @@ function invlink(bn::BernoulliNoise, A::AbstractMatrix)
 end
 
 
-function ChainRulesCore.rrule(::typeof(invlink), bn::BernoulliNoise, A)
-
-    Z = invlink(bn, A)
-
-    function invlink_bernoulli_pullback(Z_bar)
-        return ChainRulesCore.NoTangent(), 
-               ChainRulesCore.NoTangent(),
-               Z_bar .* Z .* (1 .- Z)
-    end
-
-    return Z, invlink_bernoulli_pullback
-end
-
 
 # Loss function
 
 function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    return - D.*log.(Z .+ 1e-8) - (1 .- D).*log.(1 .- Z .+ 1e-8)
+    Z2 = 1 .- Z .+ 1e-8
+    Z2 .= log.(Z2)
+    Z2 .*= (1 .- D)
+    
+    Z3 = Z .+ 1e-8
+    Z3 .= log.(Z3)
+    Z3 .*= D
+
+    Z2 .+= Z3
+    Z2 .*= -1
+    return Z2
 end
 
 
@@ -93,13 +114,14 @@ function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
     nanvals = isnan.(D)
     result = loss(bn,Z,D)
     result[nanvals] .= 0
+        
+    Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))
+    Z_bar[nanvals] .= 0
 
     function loss_bernoulli_pullback(loss_bar)
-        Z_bar = loss_bar.*(-D./Z - (1 .- D) ./ (1 .- Z))
-        Z_bar[nanvals] .= 0
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
-               Z_bar,
+               loss_bar .* Z_bar,
                ChainRulesCore.NoTangent()
     end
 
@@ -113,11 +135,11 @@ invlinkloss(bn::BernoulliNoise, Z, D) = sum(loss(bn, invlink(bn, Z), D))
 function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
 
     nanvals = isnan.(D) # Handle missing values
-    A = invlink(bn, Z)
+    A = sigmoid(Z)
+    diff = A .- D
+    diff[nanvals] .= 0
 
     function invlinkloss_bernoulli_pullback(loss_bar)
-        diff = A .- D
-        diff[nanvals] .= 0
 
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
@@ -125,11 +147,10 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
     
-    res = loss(bn, A, D)
-    res[nanvals] .= 0
+    A .= loss(bn, A, D)
+    A[nanvals] .= 0
 
-
-    return sum(res), invlinkloss_bernoulli_pullback
+    return sum(A), invlinkloss_bernoulli_pullback
 end
 
 
@@ -174,14 +195,14 @@ function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
     result = loss(pn, Z, D)
     nanvals = isnan.(D)
     result[nanvals] .= 0
-
+        
+    Z_bar = (1 .- D ./ Z)
+    Z_bar[nanvals] .= 0
 
     function loss_poisson_pullback(loss_bar)
-        Z_bar = loss_bar.*( 1 .- D ./ Z)
-        Z_bar[nanvals] .= 0
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
-               Z_bar,
+               loss_bar .* Z_bar,
                ChainRulesCore.NoTangent()
     end
 
@@ -196,19 +217,20 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
 
     nanvals = isnan.(D)
     A = invlink(pn, Z)
+        
+    diff = A .- D
+    diff[nanvals] .= 0
 
     function invlinkloss_poisson_pullback(result_bar)
-        diff = A .- D
-        diff[nanvals] .= 0
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
                result_bar .* diff,
                ChainRulesCore.NoTangent()
     end
 
-    lss = loss(pn, A, D)
-    lss[nanvals] .= 0
-    result = sum(lss)
+    A .= loss(pn, A, D)
+    A[nanvals] .= 0
+    result = sum(A)
 
     return result, invlinkloss_poisson_pullback
 end
@@ -293,11 +315,13 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
         N_bins = length(on.ext_thresholds)-1
         on_bar = zeros(N_bins + 1)
+        relevant_idx = similar(on_r_bar, Bool)
         for i=1:N_bins
-            relevant_idx = (D_idx .== i) 
+            relevant_idx .= (D_idx .== i) 
             on_bar[i] += sum(on_l_bar .* relevant_idx)
             on_bar[i+1] += sum(on_r_bar .* relevant_idx)
         end
+        relevant_idx = nothing
 
         T = typeof(on.ext_thresholds) # Move to GPU if necessary
 
@@ -393,16 +417,16 @@ function view(cn::CompositeNoise, idx::Colon)
 end
 
 
-invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, A[:,rng]), cn.noises, cn.col_ranges)...)
-loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, Z[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges)...)
-invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, A[:,rng], view(D,:,rng)), cn.noises, cn.col_ranges))
+invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
+loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng)), cn.noises, cn.col_ranges)...)
+invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng)), cn.noises, cn.col_ranges))
 
 function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
 
     result = 0
     pullbacks = []
     for (noise, rng) in zip(cn.noises, cn.col_ranges)
-        lss, pb = Zygote.pullback(invlinkloss, noise, A[:,rng], view(D, :, rng))
+        lss, pb = Zygote.pullback(invlinkloss, noise, view(A,:,rng), view(D, :, rng))
         result += lss
         push!(pullbacks, pb)
     end
