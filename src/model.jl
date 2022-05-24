@@ -1,44 +1,38 @@
 
 import Base: view
 
-export BatchMatFacModel, save_model, load_model
+export MatFacModel, save_model, load_model
 
-mutable struct BatchMatFacModel
+mutable struct MatFacModel
     X::AbstractMatrix
     Y::AbstractMatrix
-    row_transform
-    col_transform
+    row_transform::Any  # These transforms may be functions
+    col_transform::Any  # or callable structs (with trainable parameters)
     noise_model::CompositeNoise
 
-    # Regularizers. May be pure functions
-    # or callable structs (with their own 
-    # trainable parameters!)
-    X_reg
-    Y_reg
-    row_transform_reg
-    col_transform_reg
-    noise_model_reg
+    X_reg::Any                   # These regularizers may be functions
+    Y_reg::Any                   # or callable structs (with trainable
+    row_transform_reg::Any       # parameters)
+    col_transform_reg::Any
+    noise_model_reg::Any
 end
 
-@functor BatchMatFacModel
+@functor MatFacModel
 
 
-function BatchMatFacModel(X::AbstractMatrix, Y::AbstractMatrix, 
-                          cscale::ColScale, cshift::ColShift, 
-                          bscale::BatchScale, bshift::BatchShift, 
+function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix, 
                           noise_model::CompositeNoise;
+                          row_transform=x->x,
+                          col_transform=x->x,
                           X_reg=x->0.0, Y_reg=x->0.0,
                           row_transform_reg=x->0.0,
                           col_transform_reg=x->0.0,
                           noise_model_reg=x->0.0)
 
+    row_transform = make_viewable(row_transform)
+    col_transform = make_viewable(col_transform)
     
-    row_transform = x -> x
-    col_transform = BatchMatFacLayers(cscale, cshift,
-                                      bscale, bshift)
-
-
-    return BatchMatFacModel(X, Y,
+    return MatFacModel(X, Y,
                             row_transform,
                             col_transform, 
                             noise_model,
@@ -50,26 +44,19 @@ function BatchMatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
 end
 
 
-function BatchMatFacModel(M::Integer, N::Integer, K::Integer,
-                          col_batch_ids::Vector, row_batch_ids::Vector,
+function MatFacModel(M::Integer, N::Integer, K::Integer,
                           col_losses::Vector{String}; kwargs...)
 
     X = randn(K,M)
     Y = randn(K,N)
-    cscale = ColScale(N)
-    cshift = ColShift(N)
-    bscale = BatchScale(col_batch_ids, row_batch_ids)
-    bshift = BatchShift(col_batch_ids, row_batch_ids)
 
     noise_model = CompositeNoise(col_losses)
 
-    return BatchMatFacModel(X, Y, cscale, cshift,
-                                  bscale, bshift,
-                                  noise_model; kwargs...)
+    return MatFacModel(X, Y, noise_model; kwargs...)
 end
 
 
-function (bm::BatchMatFacModel)()
+function (bm::MatFacModel)()
     return invlink(bm.noise_model,
             bm.col_transform(
              bm.row_transform(
@@ -80,8 +67,8 @@ function (bm::BatchMatFacModel)()
 end
 
 
-function view(bm::BatchMatFacModel, idx1, idx2)
-    return BatchMatFacModel(view(bm.X, :, idx1),
+function view(bm::MatFacModel, idx1, idx2)
+    return MatFacModel(view(bm.X, :, idx1),
                             view(bm.Y, :, idx2),
                             view(bm.row_transform, idx1, idx2),
                             view(bm.col_transform, idx1, idx2),
@@ -93,15 +80,14 @@ function view(bm::BatchMatFacModel, idx1, idx2)
 end
 
 
-function Base.size(bm::BatchMatFacModel)
+function Base.size(bm::MatFacModel)
     return (size(bm.X, 2), size(bm.Y, 2))
 end
 
 ##############################################
 # Equality operation
-EqTypes = Union{ColScale,ColShift,BatchScale,BatchShift,CompositeNoise,
-                BatchArray,NormalNoise,PoissonNoise,BernoulliNoise,OrdinalNoise,
-                BatchMatFacModel,BatchMatFacLayers}
+EqTypes = Union{CompositeNoise,NormalNoise,PoissonNoise,BernoulliNoise,OrdinalNoise,
+                MatFacModel,ViewableFunction}
 
 NoEqTypes = Function
 

@@ -2,45 +2,31 @@
 
 import ScikitLearnBase: fit!
 
+AbstractOptimiser = Flux.Optimise.AbstractOptimiser
 
 export fit!
 
-
-function struct_summary(obj; name="", depth=0)
-
-    str = string("\t"^depth, name, " ", typeof(obj), "\n")
-    for pname in propertynames(obj)
-        str *= struct_summary(getproperty(obj, pname); name=pname, depth=depth+1)
-    end
-    return str
-end
-
-function fit!(model::BatchMatFacModel, D::AbstractMatrix;
+function fit!(model::MatFacModel, D::AbstractMatrix;
               capacity::Integer=Integer(1e8), 
-              max_epochs=1000, lr=0.01, abs_tol=1e-9, rel_tol=1e-6,
-              verbose=true)
+              max_epochs=1000, lr::Number=0.01,
+              opt::Union{Nothing,AbstractOptimiser}=nothing,
+              abs_tol::Number=1e-9, rel_tol::Number=1e-6,
+              verbosity::Integer=1)
     
     #############################
     # Preparations
     #############################
     
-    # Define a verbose-print
-    function vprint(a...)
-        if verbose
+    # Define a verbose print
+    function vprint(a...; level=1)
+        if verbosity >= level
             print(string(a...))
         end
     end
 
-    model_d = gpu(model)
-    D = gpu(D)
-
     M_D, N_D = size(D)
-    K, M = size(model_d.X)
-    N = size(model_d.Y,2)
-
-    inv_MN = 1.0/(M*N)
-    inv_MK = 1.0/(M*K)
-    inv_NK = 1.0/(N*K)
+    K, M = size(model.X)
+    N = size(model.Y,2)
 
     # Validate input size
     if (M != M_D)|(N != N_D) 
@@ -51,12 +37,16 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
              )
     end
 
+    inv_MN = 1.0/(M*N)
+    inv_MK = 1.0/(M*K)
+    inv_NK = 1.0/(N*K)
+
     col_batch_size = div(capacity,N)
     row_batch_size = div(capacity,M)
 
     # Prep the row and column transformations 
-    col_layers = make_viewable(model_d.col_transform)
-    row_layers = make_viewable(model_d.row_transform)
+    col_layers = make_viewable(model.col_transform)
+    row_layers = make_viewable(model.row_transform)
 
     # Define the likelihood function
     likelihood = (X,Y,
@@ -71,8 +61,8 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                                D)
 
     # Prep the regularizers
-    col_layer_regs = make_viewable(model_d.col_transform_reg)
-    row_layer_regs = make_viewable(model_d.row_transform_reg)
+    col_layer_regs = make_viewable(model.col_transform_reg)
+    row_layer_regs = make_viewable(model.row_transform_reg)
    
     col_regularizer = (layers, reg) -> inv_NK*reg(layers)
     row_regularizer = (layers, reg) -> inv_MK*reg(layers)
@@ -80,14 +70,17 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
     Y_regularizer = (Y, reg) -> inv_NK*reg(Y)
 
     # Initialize some objects to store gradients
-    Y_grad = zero(model_d.Y)
-    X_grad = zero(model_d.X)
-    col_layer_grads = fmapstructure(zero, rec_trainable(col_layers))
-    row_layer_grads = fmapstructure(zero, rec_trainable(row_layers))
-    noise_model_grads = fmap(zero, rec_trainable(model_d.noise_model))
+    Y_grad = zero(model.Y)
+    X_grad = zero(model.X)
+    col_layer_grads = fmapstructure(tozero, rec_trainable(col_layers))
+    row_layer_grads = fmapstructure(tozero, rec_trainable(row_layers))
+    noise_model_grads = fmapstructure(tozero, rec_trainable(model.noise_model))
 
-    # Initialize the optimizer
-    opt = Flux.Optimise.ADAGrad(lr)
+    # If no optimiser is provided, initialize
+    # the default (an ADAGrad optimiser)
+    if opt == nothing
+        opt = Flux.Optimise.ADAGrad(lr)
+    end
 
     # Track the loss
     prev_loss = Inf
@@ -105,14 +98,14 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         loss = 0.0
 
         Y_grad .= 0
-        col_layer_grads = fmap(zero, col_layer_grads)
-        noise_model_grads = fmap(zero, noise_model_grads)
+        col_layer_grads = fmap(tozero, col_layer_grads)
+        noise_model_grads = fmap(tozero, noise_model_grads)
 
         ######################################
         # Iterate through the ROWS of data
         for row_batch in BatchIter(M, row_batch_size)
 
-            X_view = view(model_d.X, :, row_batch)
+            X_view = view(model.X, :, row_batch)
             D_v = view(D, row_batch, :)
             row_layers_view = view(row_layers, row_batch, 1:N)
             col_layers_view = view(col_layers, row_batch, 1:N)
@@ -124,9 +117,9 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
 
             # Accumulate the gradient
             batchloss, grads = Zygote.withgradient(col_likelihood, 
-                                                   model_d.Y,
+                                                   model.Y,
                                                    col_layers_view,
-                                                   model_d.noise_model)
+                                                   model.noise_model)
     
             binop!(.+, Y_grad, grads[1])
             binop!(.+, col_layer_grads, grads[2])
@@ -137,13 +130,13 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         end
 
         # Accumulate Y regularizer gradient
-        regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model_d.Y, model_d.Y_reg)
+        regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
         loss += regloss
         binop!(.+, Y_grad, Y_reg_grad[1])
         
         # Update Y and the Y regularizer
-        update!(opt, model_d.Y, Y_grad)
-        update!(opt, model_d.Y_reg, Y_reg_grad[2])
+        update!(opt, model.Y, Y_grad)
+        update!(opt, model.Y_reg, Y_reg_grad[2])
 
         # Accumulate layer regularizer gradients
         regloss, reg_grads = Zygote.withgradient(col_regularizer, col_layers, col_layer_regs)
@@ -154,16 +147,20 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         update!(opt, col_layers, col_layer_grads)
         update!(opt, col_layer_regs, reg_grads[2])
 
+        # Update the noise model
+        update!(opt, model.noise_model, noise_model_grads)
+
+
         X_grad .= 0
-        row_layer_grads = fmap(zero, row_layer_grads)
+        row_layer_grads = fmap(tozero, row_layer_grads)
 
         ######################################
         # Iterate through the COLUMNS of data
         for col_batch in BatchIter(N, col_batch_size)
           
             D_v = view(D, :, col_batch)
-            noise_view = view(model_d.noise_model, col_batch)
-            Y_view = view(model_d.Y, :, col_batch)
+            noise_view = view(model.noise_model, col_batch)
+            Y_view = view(model.Y, :, col_batch)
 
             row_layers_view = view(row_layers, 1:M, col_batch)
             col_layers_view = view(col_layers, 1:M, col_batch)
@@ -172,7 +169,7 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
                                                    rl, col_layers_view, 
                                                    noise_view, D_v)
 
-            batchloss, g = Zygote.withgradient(row_likelihood, model_d.X, row_layers_view)
+            batchloss, g = Zygote.withgradient(row_likelihood, model.X, row_layers_view)
             binop!(.+, X_grad, g[1])
             binop!(.+, row_layer_grads, g[2])
         
@@ -180,14 +177,14 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         end
 
         # Accumulate X regularizer gradients
-        regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model_d.X, model_d.X_reg)
+        regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
 
         loss += regloss
         binop!(.+, X_grad, X_reg_grads[1])
 
         # Update X and the X regularizer
-        update!(opt, model_d.X, X_grad)
-        update!(opt, model_d.X_reg, X_reg_grads[2])
+        update!(opt, model.X, X_grad)
+        update!(opt, model.X_reg, X_reg_grads[2])
 
         # Accumulate the layer regularizer gradients
         regloss, reg_grads = Zygote.withgradient(row_regularizer, row_layers, row_layer_regs)
@@ -205,10 +202,10 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         # Check termination conditions
         loss_diff = prev_loss - loss 
         if loss_diff < abs_tol
-            println(string("Terminated: reached abs_tol<",abs_tol))
+            vprint("Terminated: reached abs_tol<",abs_tol, "\n"; level=0)
             break
         elseif loss_diff/loss < abs_tol
-            println(string("Terminated: reached rel_tol<",rel_tol))
+            vprint("Terminated: reached rel_tol<",rel_tol, "\n"; level=0)
             break
         else
             prev_loss = loss
@@ -216,17 +213,12 @@ function fit!(model::BatchMatFacModel, D::AbstractMatrix;
         end
     end
     if epoch >= max_epochs 
-        println(string("Terminated: reached max_epochs=",max_epochs))
+        vprint("Terminated: reached max_epochs=",max_epochs, "\n"; level=0)
     end
 
     #############################
     # Termination
     #############################
-
-    # Make sure the model gets updated with the trained values
-    for pname in propertynames(model_d)
-        setproperty!(model, pname, cpu(getproperty(model_d, pname)))
-    end
 
     return model
 end

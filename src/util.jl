@@ -1,93 +1,87 @@
 
 
-"""
-Check that the values in `vec` occur in contiguous blocks.
-I.e., the unique values are grouped together, with no intermingling.
-I.e., for each unique value the set of indices mapping to that value
-occur consecutively.
-"""
-function is_contiguous(vec::AbstractVector{T}) where T
+#################################################
+# Extensions to Flux's update! function
+#################################################
 
-    past_values = Set{T}()
-    
-    for i=1:(length(vec)-1)
-        next_value = vec[i+1]
-        if in(vec[i+1], past_values)
-            return false
+
+import Flux.Optimise: update!
+
+
+Optimiser = Flux.Optimise.AbstractOptimiser
+
+
+TupleTypes = Union{Tuple,NamedTuple}
+
+function update!(opt::Optimiser, params::Any, grads::Nothing)
+    return
+end
+
+function update!(opt::Optimiser, params::Any, grads::TupleTypes)
+    for pname in propertynames(grads)
+        g = getproperty(grads,pname)
+        if g != nothing
+            update!(opt, getproperty(params, pname), g) 
         end
-        if vec[i+1] != vec[i]
-            push!(past_values, vec[i])
+    end
+end
+
+
+#################################################
+# Extensions to Functors' fmap functions
+#################################################
+import Functors: fmap, fmapstructure
+
+# I don't see why Functors doesn't handle
+# this case by default...
+fmap(f, t::Tuple{}) = ()
+fmapstructure(f, t::Tuple{}) = ()
+
+###################################################
+# Other arithmetic operations for gradient updates
+###################################################
+
+function binop!(op, a::Any, b::Nothing)
+    return
+end
+
+function binop!(op, a::AbstractArray, b::AbstractArray)
+    a .= op(a,b)
+end
+
+function binop!(op, a::Any, b::TupleTypes)
+    for pname in propertynames(b)
+        v = getproperty(b, pname)
+        if v != nothing
+            u = getproperty(a, pname)
+            binop!(op, u, v)
         end
     end
-
-    return true
 end
 
+####################################################
+# Extract a whole tree of trainable parameters
+####################################################
 
-function ids_to_ranges(id_vec)
-
-    @assert is_contiguous(id_vec) "IDs in id_vec need to appear in contiguous chunks."
-
-    unique_ids = unique(id_vec)
-    start_idx = indexin(unique_ids, id_vec)
-    end_idx = length(id_vec) .- indexin(unique_ids, reverse(id_vec)) .+ 1
-    ranges = UnitRange[start:finish for (start,finish) in zip(start_idx, end_idx)]
-
-    return ranges
+function rec_trainable(obj::AbstractArray)
+    return obj
 end
 
-
-function ids_to_ind_mat(id_vec)
-
-    unq_ids = unique(id_vec)
-    ind_mat = zeros(Bool, length(id_vec), length(unq_ids))
-
-    for (i,name) in enumerate(unq_ids)
-        ind_mat[:,i] .= (id_vec .== name)
-    end
-
-    return ind_mat
+function rec_trainable(obj::Tuple)
+    return map(rec_trainable, obj) 
 end
 
-
-function subset_ranges(ranges::Vector, rng::UnitRange) 
-   
-    r_min = rng.start
-    r_max = rng.stop
-    @assert r_min <= r_max
-
-    @assert r_min >= ranges[1].start
-    @assert r_max <= ranges[end].stop
-
-    starts = [rr.start for rr in ranges]
-    r_min_idx = searchsorted(starts, r_min).stop
-    
-    stops = [rr.stop for rr in ranges]
-    r_max_idx = searchsorted(stops, r_max).start
-
-    new_ranges = collect(ranges[r_min_idx:r_max_idx])
-    new_ranges[1] = r_min:new_ranges[1].stop
-    new_ranges[end] = new_ranges[end].start:r_max
-
-    return new_ranges, r_min_idx, r_max_idx
+function rec_trainable(obj)
+    trn = Flux.trainable(obj)
+    return map(rec_trainable, trn)
 end
 
-function subset_ranges(ranges::Tuple, rng::UnitRange)
-    new_ranges, r_min, r_max = subset_ranges(collect(ranges), rng)
-    return Tuple(new_ranges), r_min, r_max
-end
+###################################################
+# Define a custom `zero` function
+###################################################
 
-function shift_range(rng, delta)
-    return (rng.start + delta):(rng.stop + delta) 
-end
-
-if CUDA.has_cuda()
-    function sync()
-        CUDA.synchronize()
-    end
-else
-    function sync()
-    end
-end
+tozero(x::Tuple{}) = ()
+tozero(x::Nothing) = nothing
+tozero(x) = zero(x)
 
 

@@ -13,6 +13,7 @@ function (vf::ViewableFunction)(args...)
     return vf.callable(args...)
 end
 
+#Flux.trainable(vf::ViewableFunction) = ()
 
 # We only want to make *Functions* viewable.
 # Everything else should either be
@@ -26,4 +27,8 @@ function make_viewable(obj::Function)
     return ViewableFunction(obj)
 end
 
+# Function should be idempotent
+function make_viewable(obj::ViewableFunction)
+    return obj
+end
 

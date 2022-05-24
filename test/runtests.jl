@@ -1,232 +1,9 @@
 
-using BatchMatFac, Test, Flux, Zygote, CSV, DataFrames
+using MatFac, Test, Flux, Zygote, CSV, DataFrames
 
-BMF = BatchMatFac
+MF = MatFac
     
 logistic(x) = 1 / (1 + exp(-x))
-
-function util_tests()
-
-    @testset "Utility functions" begin
-
-        @test BMF.is_contiguous([2,2,2,1,1,4,4,4])
-        @test BMF.is_contiguous(["cat","cat","dog","dog","fish"])
-        @test !BMF.is_contiguous([1,1,5,5,1,3,3,3])
-
-        @test BMF.ids_to_ranges([2,2,2,1,1,4,4,4]) == [1:3, 4:5, 6:8]
-        my_ranges = BMF.ids_to_ranges(["cat","cat","dog","dog","fish"])
-        @test my_ranges == [1:2,3:4,5:5]
-
-        @test BMF.subset_ranges(my_ranges, 2:5) == ([2:2,3:4,5:5], 1, 3)
-
-        my_ind_mat = BMF.ids_to_ind_mat([1,1,1,2,2,1,2,3,3,1,2,3,3])
-        @test my_ind_mat == Bool[1 0 0;
-                                 1 0 0;
-                                 1 0 0;
-                                 0 1 0;
-                                 0 1 0;
-                                 1 0 0;
-                                 0 1 0;
-                                 0 0 1;
-                                 0 0 1;
-                                 1 0 0;
-                                 0 1 0;
-                                 0 0 1;
-                                 0 0 1] 
-
-    end
-
-end
-
-
-function batch_array_tests()
-    
-    @testset "Batch Arrays" begin
-
-        col_batches = ["cat", "cat", "cat", "dog", "dog", "fish"]
-        row_batches = [[1,1,1,2,2], [1,1,2,2,2], [1,1,1,1,2]]
-        values = [Dict(1=>3.14, 2=>2.7), Dict(1=>0.0, 2=>0.5), Dict(1=>-1.0, 2=>1.0)]
-        A = zeros(5,6)
-
-        ##############################
-        # Constructor
-        ba = BMF.BatchArray(col_batches, row_batches, values)
-        @test ba.col_ranges == (1:3, 4:5, 6:6)
-        test_row_batches = (Bool[1 0; 1 0; 1 0; 0 1; 0 1],
-                            Bool[1 0; 1 0; 0 1; 0 1; 0 1],
-                            Bool[1 0; 1 0; 1 0; 1 0; 0 1])
-        @test ba.row_batches == test_row_batches 
-        @test ba.values == ([3.14, 2.7], [0.0, 0.5], [-1.0, 1.0])
-
-        ##############################
-        # View
-        ba_view = view(ba, 2:4, 2:5)
-        @test ba_view.col_ranges == (1:2, 3:4)
-        @test ba_view.row_batches == test_row_batches[1:2]
-        @test ba_view.row_idx == ba.row_idx[2:4]
-        @test ba_view.values == ([3.14, 2.7],[0.0,0.5])
-
-        ###############################
-        # zero
-        ba_zero = zero(ba)
-        @test ba_zero.col_ranges == ba.col_ranges
-        @test ba_zero.row_batches == ba.row_batches
-        @test ba_zero.values == ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0])
-
-        ###############################
-        # Addition
-        Z = A + ba
-        test_mat = [3.14 3.14 3.14 0.0 0.0 -1.0;
-                    3.14 3.14 3.14 0.0 0.0 -1.0;
-                    3.14 3.14 3.14 0.5 0.5 -1.0;
-                    2.7  2.7  2.7  0.5 0.5 -1.0;
-                    2.7  2.7  2.7  0.5 0.5  1.0]
-        @test Z == test_mat
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A, ba)
-        @test A_grad == ones(size(A)...)
-        @test ba_grad.values == ([9., 6.], [4., 6.], [4., 1.])
-
-        ################################
-        # Multiplication
-        Z = ones(5,6) * ba
-        @test Z == test_mat
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), ones(5,6), ba)
-        @test A_grad == Z
-        @test ba_grad.values == ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0])
-
-        ################################
-        # Exponentiation
-        ba_exp = exp(ba)
-        @test (ones(5,6) * ba_exp) == exp.(test_mat)
-        (ba_grad,) = Zygote.gradient(x->sum(ones(5,6) * exp(x)), ba)
-        @test ba_grad.values == ([9. * exp(3.14), 6. * exp(2.7)],
-                                 [4. * exp(0.0), 6. * exp(0.5)],
-                                 [4. * exp(-1.0), 1. * exp(1.0)])
-
-        #################################
-        # GPU
-        ba_d = gpu(ba)
-        @test ba.values == ([3.14, 2.7], [0.0, 0.5], [-1.0, 1.0])
-       
-        # view
-        ba_d_view = view(ba_d, 2:4, 2:5)
-        @test ba_d_view.col_ranges == (1:2, 3:4)
-        @test ba_d_view.row_batches == ba_d.row_batches[1:2]
-        @test ba_d_view.row_idx == ba_d.row_idx[2:4]
-        @test ba_d_view.values == (gpu([3.14, 2.7]),gpu([0.0,0.5]))
-
-        # zero 
-        ba_d_zero = zero(ba_d)
-        @test ba_d_zero.col_ranges == ba_d.col_ranges
-        @test ba_d_zero.row_batches == ba_d.row_batches
-        @test ba_d_zero.values == map(gpu, ([0.0, 0.0], [0.0, 0.0], [0.0, 0.0]))
-
-        # addition
-        A_d = gpu(A)
-        Z_d = A_d + ba_d
-        test_mat_d = gpu(test_mat)
-        @test Z_d == test_mat_d
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x+y), A_d, ba_d)
-        @test A_grad == gpu(ones(size(A)...))
-        @test ba_grad.values == map(gpu, ([9., 6.], [4., 6.], [4., 1.]))
-
-        # multiplication
-        Z_d = gpu(ones(5,6)) * ba_d
-        @test Z_d == test_mat_d
-        (A_grad, ba_grad) = Zygote.gradient((x,y)->sum(x*y), gpu(ones(5,6)), ba_d)
-        @test A_grad == Z_d
-        @test ba_grad.values == map(gpu, ([9.0, 6.0],[4.0, 6.0],[4.0, 1.0]))
-
-        # exponentiation
-        ba_d_exp = exp(ba_d)
-        @test isapprox((gpu(ones(5,6)) * ba_d_exp), exp.(test_mat_d))
-        (ba_grad,) = Zygote.gradient(x->sum(gpu(ones(5,6)) * exp(x)), ba_d)
-        @test all(map(isapprox, ba_grad.values, map(gpu, ([9. * exp(3.14), 6. * exp(2.7)],
-                                                          [4. * exp(0.0), 6. * exp(0.5)],
-                                                          [4. * exp(-1.0), 1. * exp(1.0)]))))
-
-
-    end
-end
-
-
-function layers_tests()
-
-    @testset "Layers" begin
-
-        M = 20
-        N = 30
-        K = 4
-
-        view_N = 10
-
-        n_col_batches = 2
-        n_row_batches = 4
-
-        ####################################
-        ## Matrix Product layer
-        #mp = BMF.MatProd(M,N,K)
-        #@test size(mp.X) == (K,M)
-        #@test size(mp.Y) == (K,N)
-        #xy = mp()
-        X = randn(K,M)
-        Y = randn(K,N)
-        xy = transpose(X)*Y
-        #@test xy == transpose(mp.X)*mp.Y
-
-        #mp_view = view(mp, :, 1:view_N)
-        #@test size(mp_view.X) == (K,M)
-        #@test size(mp_view.Y) == (K,10)
-        #view_xy = mp_view()
-        X_view = view(X,:,1:M)
-        Y_view = view(Y,:,1:view_N)
-        view_xy = transpose(X_view)*Y_view
-        #@test view_xy == transpose(mp.X)*mp.Y[:,1:10]
-        
-        ###################################
-        # Column Scale
-        cscale = BMF.ColScale(N)
-        @test size(cscale.logsigma) == (N,)
-        @test cscale(xy) == xy .* transpose(exp.(cscale.logsigma))
-        
-        cscale_view = view(cscale, 1:M, 1:view_N)
-        @test cscale_view(view_xy) == view_xy .* transpose(exp.(cscale.logsigma[1:view_N]))
-
-        ###################################
-        # Column Shift
-        cshift = BMF.ColShift(N)
-        @test size(cshift.mu) == (N,)
-        @test cshift(xy) == xy .+ transpose(cshift.mu)
-        
-        cshift_view = view(cshift, 1:M, 1:view_N)
-        @test cshift_view(view_xy) == view_xy .+ transpose(cshift.mu[1:view_N])
-
-        ##################################
-        # Batch Scale
-        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
-        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
-        bscale = BMF.BatchScale(col_batches, row_batches)
-        @test length(bscale.logdelta.values) == n_col_batches
-        @test size(bscale.logdelta.values[1]) == (n_row_batches,)
-        @test bscale(xy)[1:div(M,n_row_batches),1:div(N,n_col_batches)] == xy[1:div(M,n_row_batches),1:div(N,n_col_batches)] .* exp(bscale.logdelta.values[1][1])
-
-        bscale_grads = Zygote.gradient((f,x)->sum(f(x)), bscale, xy)
-        @test isapprox(bscale_grads[1].logdelta.values[end][end], sum(xy[16:20,16:30].*exp(bscale.logdelta.values[end][end])))
-        @test bscale_grads[2] == zeros(M,N) + exp(bscale.logdelta)
-
-        ##################################
-        # Batch Shift
-        bshift = BMF.BatchShift(col_batches, row_batches)
-        @test length(bshift.theta.values) == n_col_batches
-        @test size(bshift.theta.values[1]) == (n_row_batches,)
-        @test bshift(xy)[1:div(M,n_row_batches),1:div(N,n_col_batches)] == xy[1:div(M,n_row_batches),1:div(N,n_col_batches)] .+ bshift.theta.values[1][1]
-
-        bshift_grads = Zygote.gradient((f,x)->sum(f(x)), bshift, xy)
-        @test bshift_grads[1].theta.values == Tuple(ones(n_row_batches).*(div(M,n_row_batches)*div(N,n_col_batches)) for j=1:n_col_batches)
-        @test bshift_grads[2] == ones(M,N)
-
-    end
-end
 
 
 function noise_model_tests()
@@ -239,45 +16,45 @@ function noise_model_tests()
         # Normal noise model
         normal_data = ones(M,N)
         normal_Z = zeros(M,N)
-        nn = BMF.NormalNoise()
-        @test BMF.invlink(nn, normal_Z) == normal_Z
-        @test BMF.loss(nn, BMF.invlink(nn, normal_Z), normal_data) == 0.5.*ones(M,N)
-        @test Flux.gradient(x->sum(BMF.loss(nn, BMF.invlink(nn, x),normal_data)), normal_Z)[1] == -ones(M,N)
-        @test Flux.gradient(x->BMF.invlinkloss(nn, x,normal_data), normal_Z)[1] == -ones(M,N)
+        nn = MF.NormalNoise()
+        @test MF.invlink(nn, normal_Z) == normal_Z
+        @test MF.loss(nn, MF.invlink(nn, normal_Z), normal_data) == 0.5.*ones(M,N)
+        @test Flux.gradient(x->sum(MF.loss(nn, MF.invlink(nn, x),normal_data)), normal_Z)[1] == -ones(M,N)
+        @test Flux.gradient(x->MF.invlinkloss(nn, x,normal_data), normal_Z)[1] == -ones(M,N)
 
 
         # Logistic noise model
         logistic_data = ones(M,N)
         logistic_Z = zeros(M,N)
-        ln = BMF.BernoulliNoise()
-        @test BMF.invlink(ln, logistic_Z) == 0.5 .* ones(M,N)
-        @test Flux.gradient(x->sum(BMF.invlink(ln, x)), logistic_Z)[1] == BMF.invlink(ln,logistic_Z).*(1 .- BMF.invlink(ln, logistic_Z))
-        @test isapprox(BMF.loss(ln, BMF.invlink(ln, logistic_Z), logistic_data), log(2.0).*ones(M,N), atol=1e-6)
-        logistic_A = BMF.invlink(ln, logistic_Z)
-        @test Flux.gradient(x->sum(BMF.loss(ln, x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N)
-        @test Flux.gradient(x->BMF.invlinkloss(ln, x, logistic_data), logistic_Z)[1] == (logistic_A .- logistic_data)
+        ln = MF.BernoulliNoise()
+        @test MF.invlink(ln, logistic_Z) == 0.5 .* ones(M,N)
+        @test Flux.gradient(x->sum(MF.invlink(ln, x)), logistic_Z)[1] == MF.invlink(ln,logistic_Z).*(1 .- MF.invlink(ln, logistic_Z))
+        @test isapprox(MF.loss(ln, MF.invlink(ln, logistic_Z), logistic_data), log(2.0).*ones(M,N), atol=1e-6)
+        logistic_A = MF.invlink(ln, logistic_Z)
+        @test Flux.gradient(x->sum(MF.loss(ln, x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N)
+        @test Flux.gradient(x->MF.invlinkloss(ln, x, logistic_data), logistic_Z)[1] == (logistic_A .- logistic_data)
 
 
         # Poisson noise model
         poisson_data = ones(M,N)
         poisson_Z = zeros(M,N)
-        pn = BMF.PoissonNoise()
-        @test BMF.invlink(pn, poisson_Z) == ones(M,N)
-        @test isapprox(BMF.loss(pn, BMF.invlink(pn, poisson_Z), poisson_data), ones(M,N), atol=1e-6)
-        @test Flux.gradient(x->sum(BMF.loss(pn, BMF.invlink(pn, x), logistic_data)), poisson_Z)[1] == zeros(M,N)
-        @test Flux.gradient(x->BMF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
+        pn = MF.PoissonNoise()
+        @test MF.invlink(pn, poisson_Z) == ones(M,N)
+        @test isapprox(MF.loss(pn, MF.invlink(pn, poisson_Z), poisson_data), ones(M,N), atol=1e-6)
+        @test Flux.gradient(x->sum(MF.loss(pn, MF.invlink(pn, x), logistic_data)), poisson_Z)[1] == zeros(M,N)
+        @test Flux.gradient(x->MF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
 
         # Ordinal noise model
         ordinal_data = [1 2 3;
                         1 2 3]
         ordinal_Z = [0 0 0;
                      0 0 0]
-        on = BMF.OrdinalNoise([-Inf, -1, 1, Inf])
-        @test BMF.invlink(on, ordinal_Z) == ordinal_Z 
-        @test isapprox(BMF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
+        on = MF.OrdinalNoise([-Inf, -1, 1, Inf])
+        @test MF.invlink(on, ordinal_Z) == ordinal_Z 
+        @test isapprox(MF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
                                                                -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
                        atol=1e-6)
-        thresh_grad, z_grad = Flux.gradient((noise, x)->sum(BMF.loss(noise, BMF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
+        thresh_grad, z_grad = Flux.gradient((noise, x)->sum(MF.loss(noise, MF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
         
         lgrad(lt,rt,z) = logistic(lt-z)*(1 - logistic(lt-z))/(logistic(rt-z)-logistic(lt-z))
         rgrad(lt,rt,z) = -logistic(rt-z)*(1 - logistic(rt-z))/(logistic(rt-z)-logistic(lt-z))
@@ -291,7 +68,7 @@ function noise_model_tests()
         @test thresh_grad.ext_thresholds == test_thresh_grad 
         @test z_grad == test_z_grad 
 
-        thresh_grad, z_grad = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, ordinal_data), on, ordinal_Z)
+        thresh_grad, z_grad = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, ordinal_data), on, ordinal_Z)
         @test thresh_grad.ext_thresholds == test_thresh_grad
         @test z_grad == test_z_grad
 
@@ -303,21 +80,21 @@ function noise_model_tests()
         composite_data[:,31:40] .= 2
 
         noise_model = repeat(["normal","bernoulli","poisson", "ordinal3"], inner=10)
-        cn = BMF.CompositeNoise(noise_model)
+        cn = MF.CompositeNoise(noise_model)
 
-        composite_A = BMF.invlink(cn, composite_Z)
-        @test composite_A[:,1:10] == BMF.invlink(nn, composite_Z[:,1:10])
-        @test composite_A[:,11:20]== BMF.invlink(ln, composite_Z[:,11:20])
-        @test composite_A[:,21:30]== BMF.invlink(pn, composite_Z[:,21:30])
-        @test composite_A[:,31:40]== BMF.invlink(cn.noises[4], composite_Z[:,31:40])
+        composite_A = MF.invlink(cn, composite_Z)
+        @test composite_A[:,1:10] == MF.invlink(nn, composite_Z[:,1:10])
+        @test composite_A[:,11:20]== MF.invlink(ln, composite_Z[:,11:20])
+        @test composite_A[:,21:30]== MF.invlink(pn, composite_Z[:,21:30])
+        @test composite_A[:,31:40]== MF.invlink(cn.noises[4], composite_Z[:,31:40])
 
-        composite_l = BMF.loss(cn, composite_A, composite_data)
-        @test composite_l[:,1:10] == BMF.loss(nn, composite_A[:,1:10] , composite_data[:,1:10])
-        @test composite_l[:,11:20]== BMF.loss(ln, composite_A[:,11:20], composite_data[:,11:20])
-        @test composite_l[:,21:30]== BMF.loss(pn, composite_A[:,21:30], composite_data[:,21:30])
-        @test composite_l[:,31:40]== BMF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
+        composite_l = MF.loss(cn, composite_A, composite_data)
+        @test composite_l[:,1:10] == MF.loss(nn, composite_A[:,1:10] , composite_data[:,1:10])
+        @test composite_l[:,11:20]== MF.loss(ln, composite_A[:,11:20], composite_data[:,11:20])
+        @test composite_l[:,21:30]== MF.loss(pn, composite_A[:,21:30], composite_data[:,21:30])
+        @test composite_l[:,31:40]== MF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
 
-        grad_cn, grad_Z = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, composite_data), 
+        grad_cn, grad_Z = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, composite_data), 
                                         cn, composite_Z)
         test_grad_Z = zeros(M,N)
         test_grad_Z[:,11:20] .= 0.5
@@ -333,7 +110,7 @@ function noise_model_tests()
         composite_data_d = gpu(composite_data)
         test_grad_Z_d = gpu(test_grad_Z)
         test_grad_ordinal_d = gpu(test_grad_ordinal)
-        grad_cn_d, grad_Z_d = Flux.gradient((noise,x)->BMF.invlinkloss(noise, x, composite_data_d), 
+        grad_cn_d, grad_Z_d = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, composite_data_d), 
                                             cn_d, composite_Z_d)
         @test isapprox(grad_Z_d, test_grad_Z_d)
         @test isapprox(grad_cn_d.noises[4].ext_thresholds, test_grad_ordinal_d)
@@ -350,34 +127,28 @@ function model_tests()
         M = 20
         N = 40
         K = 5
-        n_col_batches = 4
-        n_row_batches = 4
+        n_loss_types = 4
+        #n_row_batches = 4
         n_logistic = div(N,4)
         n_ordinal = div(N,4)
         n_poisson = div(N,4)
         n_normal = N - (n_logistic + n_ordinal + n_poisson)
 
-        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
-        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
         col_losses = [repeat(["bernoulli"], n_logistic);
                       repeat(["ordinal5"], n_ordinal);
                       repeat(["poisson"], n_poisson);
                       repeat(["normal"], n_normal)]
 
-        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+        model = MF.MatFacModel(M,N,K,col_losses)
 
         @test size(model.X) == (K,M)
-        @test map(typeof, model.noise_model.noises) == (BMF.BernoulliNoise, BMF.OrdinalNoise, BMF.PoissonNoise, BMF.NormalNoise)
+        @test map(typeof, model.noise_model.noises) == (MF.BernoulliNoise, MF.OrdinalNoise, MF.PoissonNoise, MF.NormalNoise)
         @test size(model()) == (M,N)
         @test size(model) == (M,N)
 
         # GPU
         model_d = gpu(model)
         @test isapprox(transpose(model_d.X)*model_d.Y, gpu(transpose(model.X)*model.Y))
-        @test isapprox(model_d.col_transform.cscale.logsigma, gpu(model.col_transform.cscale.logsigma))
-        @test isapprox(model_d.col_transform.cshift.mu, gpu(model.col_transform.cshift.mu))
-        @test all(map(isapprox, cpu(model_d.col_transform.bscale.logdelta.values), cpu(model.col_transform.bscale.logdelta.values)))
-        @test all(map(isapprox, cpu(model_d.col_transform.bshift.theta.values), cpu(model.col_transform.bshift.theta.values)))
         @test isapprox(model_d(), gpu(model()))
     end
 end
@@ -426,106 +197,61 @@ function fit_tests()
         M = 20
         N = 40
         K = 3
-        n_col_batches = 4
-        n_row_batches = 4
-        n_logistic = div(N,n_col_batches)
-        n_ordinal = div(N,n_col_batches)
-        n_poisson = div(N,n_col_batches)
-        n_normal = div(N,n_col_batches) 
+        n_loss_types = 4
+        n_logistic = div(N,n_loss_types)
+        n_ordinal = div(N,n_loss_types)
+        n_poisson = div(N,n_loss_types)
+        n_normal = div(N,n_loss_types) 
 
-        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
-        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
         col_losses = [repeat(["bernoulli"], n_logistic);
                       repeat(["normal"], n_normal);
                       repeat(["poisson"], n_poisson);
                       repeat(["ordinal5"], n_ordinal)];
         
-        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
 
         composite_data = zeros(M,N)
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
+        #################################
+        # CPU TESTS
+        model = MF.MatFacModel(M,N,K, col_losses)
         X_start = deepcopy(model.X)
         Y_start = deepcopy(model.Y)
-        logsigma_start = deepcopy(model.col_transform.cscale.logsigma)
-        mu_start = deepcopy(model.col_transform.cshift.mu)
-        delta_start = deepcopy(model.col_transform.bscale.logdelta.values)
-        theta_start = deepcopy(model.col_transform.bshift.theta.values)
+        thresholds_start = deepcopy(model.noise_model.noises[4].ext_thresholds)
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbose=true, lr=0.05, max_epochs=10)
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10)
         @test true
 
         # test whether the parameters were modified
         @test !isapprox(model.X, X_start)
         @test !isapprox(model.Y, Y_start)
-        @test !isapprox(model.col_transform.cshift.mu, mu_start)
-        @test !isapprox(model.col_transform.cscale.logsigma, logsigma_start)
-        @test all(map((u,v)->!isapprox(u,v), delta_start, model.col_transform.bscale.logdelta.values))
-        @test all(map((u,v)->!isapprox(u,v), theta_start, model.col_transform.bshift.theta.values))
-    end
-end
+        @test !isapprox(model.noise_model.noises[4].ext_thresholds, thresholds_start)
 
+        #################################
+        # GPU TESTS
+        model = MF.MatFacModel(M,N,K, col_losses)
+        model = gpu(model)
+        composite_data = gpu(composite_data)
+        X_start = deepcopy(model.X)
+        Y_start = deepcopy(model.Y)
+        thresholds_start = deepcopy(model.noise_model.noises[4].ext_thresholds)
 
-function simulate_tests()
-
-    @testset "Simulation" begin
-
-        M = 20
-        N = 40
-        K = 3
-        n_col_batches = 4
-        n_row_batches = 4
-        n_logistic = div(N,n_col_batches)
-        n_ordinal = div(N,n_col_batches)
-        n_poisson = div(N,n_col_batches)
-        n_normal = div(N,n_col_batches) 
-
-        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
-        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
-        col_losses = [repeat(["bernoulli"], n_logistic);
-                      repeat(["normal"], n_normal);
-                      repeat(["poisson"], n_poisson);
-                      repeat(["ordinal5"], n_ordinal)];
-        #model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
-
-        logsigma_map = Dict("colbatch1" => log(1.0),
-                            "colbatch2" => log(2.0),
-                            "colbatch3" => log(3.0),
-                            "colbatch4" => log(4.0))
-        logsigma = map(x->logsigma_map[x], col_batches)
-
-        mu_map = Dict("colbatch1" => -3.0,
-                      "colbatch2" => 3.0,
-                      "colbatch3" => 3.0,
-                      "colbatch4" => 0.0)
-        mu = map(x->mu_map[x], col_batches)
-
-        sample_noise_map = Dict("colbatch1" => 0.0001,
-                                "colbatch2" => 3.0,
-                                "colbatch3" => 3.0,
-                                "colbatch4" => 0.0)
-        sample_noise_params = map(x->sample_noise_map[x], col_batches)
-
-        X = randn(K,M) ./ sqrt(K)
-        Y = randn(K,N)
-        sim_data = BMF.simulate(X, Y, logsigma, mu,
-                                col_batches, row_batches,
-                                0.25, col_losses, sample_noise_params)
-
-        info_df = DataFrame(convert(Matrix{Any}, permutedims(hcat(col_batches, col_losses))), :auto)
-
-        df = DataFrame(convert(Matrix{Any}, sim_data), :auto)
-        append!(info_df, df)
-        CSV.write("dumb.tsv", info_df; delim="\t")
-
+        # test whether the fit! function can run to
+        # completion (under max_epochs condition)
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10)
         @test true
 
+        # test whether the parameters were modified
+        @test !isapprox(model.X, X_start)
+        @test !isapprox(model.Y, Y_start)
+        @test !isapprox(cpu(model.noise_model.noises[4].ext_thresholds), cpu(thresholds_start))
+        
     end
-
 end
+
 
 
 function io_tests()
@@ -537,24 +263,21 @@ function io_tests()
         M = 20
         N = 40
         K = 3
-        n_col_batches = 4
-        n_row_batches = 4
-        n_logistic = div(N,n_col_batches)
-        n_ordinal = div(N,n_col_batches)
-        n_poisson = div(N,n_col_batches)
-        n_normal = div(N,n_col_batches) 
+        n_loss_types = 4
+        n_logistic = div(N,n_loss_types)
+        n_ordinal = div(N,n_loss_types)
+        n_poisson = div(N,n_loss_types)
+        n_normal = div(N,n_loss_types) 
 
-        col_batches = repeat([string("colbatch",i) for i=1:n_col_batches], inner=div(N,n_col_batches))
-        row_batches = [repeat([string("rowbatch",i) for i=1:n_row_batches], inner=div(M,n_row_batches)) for j=1:n_col_batches]
         col_losses = [repeat(["bernoulli"], n_logistic);
                       repeat(["normal"], n_normal);
                       repeat(["poisson"], n_poisson);
                       repeat(["ordinal5"], n_ordinal)];
-        model = BMF.BatchMatFacModel(M,N,K, col_batches, row_batches, col_losses)
+        model = MF.MatFacModel(M,N,K, col_losses)
        
-        BMF.save_model(test_bson_path, model)
+        MF.save_model(test_bson_path, model)
 
-        new_model = BMF.load_model(test_bson_path)
+        new_model = MF.load_model(test_bson_path)
 
         @test new_model.X == model.X
         @test new_model.Y == model.Y
@@ -567,14 +290,10 @@ end
 
 function main()
     
-    util_tests()
-    batch_array_tests()
-    layers_tests()
     noise_model_tests()
     model_tests()
     update_tests()
     fit_tests()
-    #simulate_tests()
     io_tests()
 
 end

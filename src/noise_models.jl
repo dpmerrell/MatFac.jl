@@ -2,7 +2,6 @@
 
 import Base: view
 
-
 #########################################################
 # Normal noise model
 #########################################################
@@ -47,11 +46,6 @@ invlinkloss(nn::NormalNoise, Z, D) = sum(loss(nn::NormalNoise, Z, D))
 
 function view(nn::NormalNoise, idx)
     return nn
-end
-
-
-function simulate(nn::NormalNoise, Z, std)
-    return Z .+ randn(size(Z)...).*transpose(std)
 end
 
 
@@ -159,15 +153,6 @@ function view(bn::BernoulliNoise, idx)
 end
 
 
-function simulate(bn::BernoulliNoise, Z, p)
-
-    signal = (rand(size(Z)...) .<= Z)
-    noise = (rand(size(Z)...) .<= transpose(p))
-
-    return xor.(signal, noise)
-end
-
-
 #########################################################
 # Poisson noise model
 #########################################################
@@ -243,9 +228,6 @@ end
 
 poisson_sample(z) = rand(Poisson(z))
 
-function simulate(pn::PoissonNoise, Z, noise)
-    return poisson_sample.(Z .+ transpose(noise))
-end
 
 #########################################################
 # Ordinal noise model
@@ -257,13 +239,13 @@ mutable struct OrdinalNoise
     ext_thresholds::AbstractVector{<:Number}
 end
 
+@functor OrdinalNoise
+
 function OrdinalNoise(n_values::Integer)
     thresholds = collect(1:(n_values - 1)) .- 0.5*n_values
     ext_thresholds = [[-Inf]; thresholds; [Inf]]
     return OrdinalNoise(ext_thresholds)
 end
-
-@functor OrdinalNoise
 
 
 function invlink(on::OrdinalNoise, A)
@@ -348,24 +330,6 @@ function view(on::OrdinalNoise, idx)
 end
 
 
-function simulate(on::OrdinalNoise, Z, noise)
-   
-    Z_noise = Z .+ randn(size(Z)...).*transpose(noise)
-    n_bins = length(on.ext_thresholds) - 1
-
-    data = zero(Z)
-    for i=1:n_bins
-        l_thresh = on.ext_thresholds[i]
-        r_thresh = on.ext_thresholds[i+1]
-        valid_idx = ((l_thresh .<= Z_noise) .& (Z_noise .<= r_thresh))
-        
-        data[valid_idx] .= i 
-    end
-
-    return data
-end
-
-
 #########################################################
 # "Composite" noise model
 #########################################################
@@ -378,9 +342,7 @@ mutable struct CompositeNoise
     noises::Tuple # NoiseModel objects
 end
 
-@functor CompositeNoise
-
-trainable(cn::CompositeNoise) = (noises=cn.noises,)
+@functor CompositeNoise (noises,)
 
 
 function CompositeNoise(noise_model_ids::Vector{String})
@@ -451,20 +413,76 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
 end
 
 
-function simulate(cn::CompositeNoise, Z, noise_param)
-
-    result = zero(Z)
-
-    for (rng, nm) in zip(cn.col_ranges, cn.noises)
-        result[:,rng] .= simulate(nm, Z[:,rng], noise_param[rng])
-    end
-
-    return result
-end
-
 ######################################################
 # HELPER FUNCTIONS
 ######################################################
+
+"""
+Check that the values in `vec` occur in contiguous blocks.
+I.e., the unique values are grouped together, with no intermingling.
+I.e., for each unique value the set of indices mapping to that value
+occur consecutively.
+"""
+function is_contiguous(vec::AbstractVector{T}) where T
+
+    past_values = Set{T}()
+    
+    for i=1:(length(vec)-1)
+        next_value = vec[i+1]
+        if in(vec[i+1], past_values)
+            return false
+        end
+        if vec[i+1] != vec[i]
+            push!(past_values, vec[i])
+        end
+    end
+
+    return true
+end
+
+
+function ids_to_ranges(id_vec)
+
+    @assert is_contiguous(id_vec) "IDs in id_vec need to appear in contiguous chunks."
+
+    unique_ids = unique(id_vec)
+    start_idx = indexin(unique_ids, id_vec)
+    end_idx = length(id_vec) .- indexin(unique_ids, reverse(id_vec)) .+ 1
+    ranges = UnitRange[start:finish for (start,finish) in zip(start_idx, end_idx)]
+
+    return ranges
+end
+
+function subset_ranges(ranges::Vector, rng::UnitRange) 
+   
+    r_min = rng.start
+    r_max = rng.stop
+    @assert r_min <= r_max
+
+    @assert r_min >= ranges[1].start
+    @assert r_max <= ranges[end].stop
+
+    starts = [rr.start for rr in ranges]
+    r_min_idx = searchsorted(starts, r_min).stop
+    
+    stops = [rr.stop for rr in ranges]
+    r_max_idx = searchsorted(stops, r_max).start
+
+    new_ranges = collect(ranges[r_min_idx:r_max_idx])
+    new_ranges[1] = r_min:new_ranges[1].stop
+    new_ranges[end] = new_ranges[end].start:r_max
+
+    return new_ranges, r_min_idx, r_max_idx
+end
+
+function subset_ranges(ranges::Tuple, rng::UnitRange)
+    new_ranges, r_min, r_max = subset_ranges(collect(ranges), rng)
+    return Tuple(new_ranges), r_min, r_max
+end
+
+function shift_range(rng, delta)
+    return (rng.start + delta):(rng.stop + delta) 
+end
 
 
 function construct_noise(string_id::String)
