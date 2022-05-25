@@ -59,8 +59,8 @@ using Flux        # for the `gpu` function
 
 # Construct a model for a 1000 x 5000 dataset;
 # assume the latent dimension is 10.
-my_model = MatFacModel(1000, 5000, 10, loss="poisson";
-                       X_reg=x->0.1 .* (x.*x), 
+my_model = MatFacModel(1000, 5000, 10, "poisson"; # Use a Poisson noise model for count data
+                       X_reg=x->0.1 .* (x.*x),    # Quadratic regularizers for X and Y
                        Y_reg=y->0.1 .* (y.*y)
                        )
 
@@ -68,8 +68,8 @@ my_model = MatFacModel(1000, 5000, 10, loss="poisson";
 my_model = gpu(my_model)
 D = gpu(D)
 
-# Fit the model to data
-fit!(my_model, D; lr=0.01, max_epochs=1000)
+# Fit the model to data. NaNs in the data are interpreted as missing values.
+fit!(my_model, D; lr=0.01, max_epochs=1000) 
 
 # Move model back from GPU, and save to a BSON file.
 my_model = cpu(my_model)
