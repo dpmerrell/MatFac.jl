@@ -67,8 +67,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     inv_MK = 1.0/(M*K)
     inv_NK = 1.0/(N*K)
 
-    col_batch_size = div(capacity,N)
-    row_batch_size = div(capacity,M)
+    col_batch_size = div(capacity,M)
+    row_batch_size = div(capacity,N)
 
     # Prep the row and column transformations 
     col_layers = make_viewable(model.col_transform)

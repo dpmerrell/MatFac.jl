@@ -143,7 +143,6 @@ function Base.:(==)(a::T, b::T) where T <: EqTypes
         bf = getfield(b, fn)
         if !(af == bf)
             if !((typeof(af) <: NoEqTypes) & (typeof(bf) <: NoEqTypes))
-                println(string("NOT EQUAL: ", fn))
                 return false
             end
         end
