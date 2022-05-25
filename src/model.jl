@@ -21,31 +21,61 @@ end
 
 
 function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix, 
-                          noise_model::CompositeNoise;
-                          row_transform=x->x,
-                          col_transform=x->x,
-                          X_reg=x->0.0, Y_reg=x->0.0,
-                          row_transform_reg=x->0.0,
-                          col_transform_reg=x->0.0,
-                          noise_model_reg=x->0.0)
+                     noise_model::CompositeNoise;
+                     row_transform=x->x,
+                     col_transform=x->x,
+                     X_reg=x->0.0, Y_reg=x->0.0,
+                     row_transform_reg=x->0.0,
+                     col_transform_reg=x->0.0,
+                     noise_model_reg=x->0.0)
 
     row_transform = make_viewable(row_transform)
     col_transform = make_viewable(col_transform)
     
     return MatFacModel(X, Y,
-                            row_transform,
-                            col_transform, 
-                            noise_model,
-                            X_reg, Y_reg,
-                            row_transform_reg, 
-                            col_transform_reg, 
-                            noise_model_reg)
+                       row_transform,
+                       col_transform, 
+                       noise_model,
+                       X_reg, Y_reg,
+                       row_transform_reg, 
+                       col_transform_reg, 
+                       noise_model_reg)
 
 end
 
 
+"""
+    MatFacModel(M::Int, N::Int, K::Int, col_losses::Vector{String};
+                row_transform=identity,
+                col_transform=identity,
+                X_reg=x->0, Y_reg=y->0, 
+                row_transform_reg=x->0,
+                col_transform_reg=x->0,
+                noise_model_reg=x->0)
+
+Construct a matrix factorization model for an
+M x N dataset. Assume K latent factors.
+
+Specify the loss for each column via `col_losses`,
+a length-N vector of strings. Permissible string values are:
+
+* "normal"
+* "bernoulli"
+* "poisson"
+* "ordinalN", where "N" is replaced by some integer.
+  E.g., "ordinal3", "ordinal4".
+
+All of the keyword arguments are either (a) functions or
+(b) callable structs (i.e., functors). We allow for the possibility
+for each of these to contain trainable parameters.
+
+* `row_transform`: a (trainable) transformation on the _rows_ of the model.
+* `col_transform`: a (trainable) transformation on the _columns_ of the model.
+* `*_reg`: a (trainable) regularizer for the specified object.
+
+"""
 function MatFacModel(M::Integer, N::Integer, K::Integer,
-                          col_losses::Vector{String}; kwargs...)
+                     col_losses::Vector{String}; kwargs...)
 
     X = randn(K,M)
     Y = randn(K,N)
@@ -54,6 +84,20 @@ function MatFacModel(M::Integer, N::Integer, K::Integer,
 
     return MatFacModel(X, Y, noise_model; kwargs...)
 end
+
+
+"""
+    MatFacModel(M, N, K, loss::String; kwargs...)
+
+Identical to the other constructor, but applies the same
+`loss` function to all columns of data.
+"""
+function MatFacModel(M::Integer, N::Integer, K::Integer,
+                     loss::String; kwargs...)
+    losses = fill(loss, N)
+    return MatFacModel(M, N, K, losses; kwargs)
+end
+
 
 
 function (bm::MatFacModel)()
@@ -65,6 +109,7 @@ function (bm::MatFacModel)()
             )
            )
 end
+
 
 
 function view(bm::MatFacModel, idx1, idx2)
@@ -83,6 +128,7 @@ end
 function Base.size(bm::MatFacModel)
     return (size(bm.X, 2), size(bm.Y, 2))
 end
+
 
 ##############################################
 # Equality operation
@@ -109,10 +155,20 @@ end
 ################################################
 # Model file I/O
 
+"""
+    save_model(filename, model)
+
+Save `model` to a BSON file located at `filename`.
+"""
 function save_model(filename, model)
     BSON.@save filename model
 end
 
+"""
+    load_model(filename)
+
+load a model from the BSON located at `filename`.
+"""
 function load_model(filename)
     d = BSON.load(filename, @__MODULE__)
     return d[:model]

@@ -6,8 +6,34 @@ AbstractOptimiser = Flux.Optimise.AbstractOptimiser
 
 export fit!
 
+"""
+    fit!(model::MatFacModel, D::AbstractMatrix;
+         capacity=10^8, 
+         opt=ADAGrad(), lr=0.01, max_epochs=1000,
+         abs_tol=1e-9, rel_tol=1e-6, 
+         verbosity=1)
+
+Fit a MatFacModel to dataset D. 
+
+* `capacity` refers to memory capacity. It controls
+  the size of minibatches during training. I.e., larger
+  `capacity` means larger minibatches.
+* `opt` is an optional Flux `AbstractOptimiser` object.
+  Overrides the `lr` kwarg.
+* `lr` is learning rate. Defaults to 0.01.
+* `abs_tol` and `rel_tol` are standard convergence criteria.
+* `max_epochs`: an upper bound on the number of epochs.
+* `verbosity`: larger values make the method print more 
+  information to stdout.
+
+We recommend loading `model` and `D` to GPU _before_ fitting:
+```
+model = gpu(model)
+D = gpu(D)
+```
+"""
 function fit!(model::MatFacModel, D::AbstractMatrix;
-              capacity::Integer=Integer(1e8), 
+              capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
               abs_tol::Number=1e-9, rel_tol::Number=1e-6,

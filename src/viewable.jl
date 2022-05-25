@@ -13,8 +13,6 @@ function (vf::ViewableFunction)(args...)
     return vf.callable(args...)
 end
 
-#Flux.trainable(vf::ViewableFunction) = ()
-
 # We only want to make *Functions* viewable.
 # Everything else should either be
 # (1) a mutable struct with `view` defined; or
