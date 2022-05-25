@@ -40,7 +40,7 @@ The MatFac.jl API allows you to extend this model much further:
 To install, do the typical Julia thing:
 
 ```
-julia> using Pkg; Pkg.install(url="https://github.com/dpmerrell/MatFac.jl")
+julia> using Pkg; Pkg.add(url="https://github.com/dpmerrell/MatFac.jl")
 ```
 
 The most important things to know about: 
