@@ -77,8 +77,8 @@ for each of these to contain trainable parameters.
 function MatFacModel(M::Integer, N::Integer, K::Integer,
                      col_losses::Vector{String}; kwargs...)
 
-    X = randn(K,M)
-    Y = randn(K,N)
+    X = randn(K,M) ./ (sqrt(K)*100) 
+    Y = randn(K,N) ./ 100
 
     noise_model = CompositeNoise(col_losses)
 
