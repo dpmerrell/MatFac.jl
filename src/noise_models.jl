@@ -5,7 +5,17 @@ import Base: view
 #########################################################
 # Normal noise model
 #########################################################
-mutable struct NormalNoise end
+mutable struct NormalNoise 
+    weight::AbstractVector
+end
+
+
+@functor NormalNoise
+Flux.trainable(nn::NormalNoise) = ()
+
+function NormalNoise(N::Integer)
+    return NormalNoise(ones(N))
+end
 
 # inverse link
 
@@ -14,11 +24,11 @@ function invlink(::NormalNoise, A::AbstractMatrix)
 end
 
 
-function loss(::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
+function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
     diff = (Z .- D)
     diff .*= diff
     diff .*= 0.5
-    return diff
+    return diff .* transpose(nn.weight)
 end
 
 
@@ -29,9 +39,10 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
     diff[nanvals] .= 0
     loss = diff.*diff
     loss .*= 0.5
+    loss .*= transpose(nn.weight)
 
     function loss_normal_pullback(loss_bar)
-        Z_bar = loss_bar .* diff
+        Z_bar = loss_bar .* diff .* transpose(nn.weight)
         return ChainRulesCore.NoTangent(), 
                ChainRulesCore.NoTangent(),
                Z_bar, 
@@ -45,7 +56,7 @@ end
 invlinkloss(nn::NormalNoise, Z, D) = sum(loss(nn::NormalNoise, Z, D))
 
 function view(nn::NormalNoise, idx)
-    return nn
+    return NormalNoise(view(nn.weight, idx))
 end
 
 
@@ -53,7 +64,16 @@ end
 # Bernoulli (logistic) noise model
 #########################################################
 
-mutable struct BernoulliNoise end
+mutable struct BernoulliNoise 
+    weight::AbstractVector
+end
+
+@functor BernoulliNoise
+Flux.trainable(bn::BernoulliNoise) = ()
+
+function BernoulliNoise(N::Integer)
+    return BernoulliNoise(ones(N))
+end
 
 # inverse link function
 #sigmoid(x) = 1 ./ (1 .+ exp.(-x))
@@ -79,11 +99,9 @@ function ChainRulesCore.rrule(::typeof(sigmoid), x)
     return y, sigmoid_pullback
 end
 
-
 function invlink(bn::BernoulliNoise, A::AbstractMatrix)
     return sigmoid(A) 
 end
-
 
 
 # Loss function
@@ -99,6 +117,7 @@ function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
 
     Z2 .+= Z3
     Z2 .*= -1
+    Z2 .*= transpose(bn.weight)
     return Z2
 end
 
@@ -110,6 +129,7 @@ function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
     result[nanvals] .= 0
         
     Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))
+    Z_bar .*= transpose(bn.weight)
     Z_bar[nanvals] .= 0
 
     function loss_bernoulli_pullback(loss_bar)
@@ -131,6 +151,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
     nanvals = isnan.(D) # Handle missing values
     A = sigmoid(Z)
     diff = A .- D
+    diff .*= transpose(bn.weight)
     diff[nanvals] .= 0
 
     function invlinkloss_bernoulli_pullback(loss_bar)
@@ -149,7 +170,7 @@ end
 
 
 function view(bn::BernoulliNoise, idx)
-    return bn
+    return BernoulliNoise(view(bn.weight, idx))
 end
 
 
@@ -157,8 +178,16 @@ end
 # Poisson noise model
 #########################################################
 
-mutable struct PoissonNoise end
+mutable struct PoissonNoise 
+    weight::AbstractVector
+end
 
+@functor PoissonNoise
+Flux.trainable(pn::PoissonNoise) = ()
+
+function PoissonNoise(N::Integer)
+    return PoissonNoise(ones(N))
+end
 
 # inverse link function
 
@@ -171,7 +200,7 @@ end
 # Loss function
 
 function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    return Z .- D.*log.(Z .+ 1e-8)
+    return (Z .- D.*log.(Z .+ 1e-8)) .* transpose(pn.weight)
 end
 
 
@@ -182,6 +211,7 @@ function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
     result[nanvals] .= 0
         
     Z_bar = (1 .- D ./ Z)
+    Z_bar .*= transpose(pn.weight)
     Z_bar[nanvals] .= 0
 
     function loss_poisson_pullback(loss_bar)
@@ -204,6 +234,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
     A = invlink(pn, Z)
         
     diff = A .- D
+    diff .*= transpose(pn.weight)
     diff[nanvals] .= 0
 
     function invlinkloss_poisson_pullback(result_bar)
@@ -222,7 +253,7 @@ end
 
 
 function view(pn::PoissonNoise, idx)
-    return pn
+    return PoissonNoise(view(pn.weight, idx))
 end
 
 
@@ -235,18 +266,27 @@ poisson_sample(z) = rand(Poisson(z))
 
 # Inverse link function
 
-mutable struct OrdinalNoise 
+mutable struct OrdinalNoise
+    weight::AbstractVector
     ext_thresholds::AbstractVector{<:Number}
 end
 
 @functor OrdinalNoise
+Flux.trainable(on::OrdinalNoise) = (ext_thresholds=on.ext_thresholds,)
 
-function OrdinalNoise(n_values::Integer)
+function OrdinalNoise(weight::AbstractVector, n_values::Integer)
     thresholds = collect(1:(n_values - 1)) .- 0.5*n_values
     ext_thresholds = [[-Inf]; thresholds; [Inf]]
-    return OrdinalNoise(ext_thresholds)
+    return OrdinalNoise(weight, ext_thresholds)
 end
 
+function OrdinalNoise(N::Integer, ext_thresholds::Vector{<:Number})
+    return OrdinalNoise(ones(N), ext_thresholds)
+end
+
+function OrdinalNoise(N::Integer, n_values::Integer)
+    return OrdinalNoise(ones(N), n_values)
+end
 
 function invlink(on::OrdinalNoise, A)
     return A
@@ -259,6 +299,7 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix)
     l_thresh = on.ext_thresholds[D_idx]
     r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
     loss = -log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z) .+ 1e-8)
+    loss .*= transpose(on.weight)
 
     return loss
 end
@@ -293,7 +334,9 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
     function loss_ordinal_pullback(loss_bar)
 
         on_r_bar = loss_bar .* -sig_r .* (1 .- sig_r) ./ sig_diff
+        on_r_bar .*= transpose(on.weight)
         on_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ sig_diff
+        on_l_bar .*= transpose(on.weight)
 
         N_bins = length(on.ext_thresholds)-1
         on_bar = zeros(N_bins + 1)
@@ -309,6 +352,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
         on_bar = Tangent{OrdinalNoise}(ext_thresholds=T(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
+        Z_bar .*= transpose(on.weight)
 
         return ChainRulesCore.NoTangent(), 
                on_bar, 
@@ -317,6 +361,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
     end
     
     loss = -log.(sig_diff .+ 1e-8)
+    loss .*= transpose(on.weight)
 
     return loss, loss_ordinal_pullback
 end
@@ -326,7 +371,7 @@ invlinkloss(on::OrdinalNoise, Z, D) = sum(loss(on, Z, D))
 
 
 function view(on::OrdinalNoise, idx)
-    return on
+    return OrdinalNoise(view(on.weight, idx), on.ext_thresholds)
 end
 
 
@@ -345,12 +390,18 @@ end
 @functor CompositeNoise (noises,)
 
 
-function CompositeNoise(noise_model_ids::Vector{String})
-    
+function CompositeNoise(noise_model_ids::Vector{String}; 
+                        weight::Union{Nothing,<:AbstractVector}=nothing)
+   
+    if weight == nothing
+        weight = ones(length(noise_model_ids))
+    end
+
     unq_ids = unique(noise_model_ids)
     ranges = ids_to_ranges(noise_model_ids)
+    weights = [view(weight, r) for r in ranges]
 
-    noise_models = map(construct_noise, unq_ids)
+    noise_models = map(construct_noise, unq_ids, weights)
 
     return CompositeNoise(Tuple(ranges), Tuple(noise_models)) 
 end
@@ -485,17 +536,17 @@ function shift_range(rng, delta)
 end
 
 
-function construct_noise(string_id::String)
+function construct_noise(string_id::String, weight::AbstractVector)
 
     if string_id == "normal"
-        noise = NormalNoise()
+        noise = NormalNoise(weight)
     elseif string_id == "bernoulli"
-        noise = BernoulliNoise()
+        noise = BernoulliNoise(weight)
     elseif string_id == "poisson"
-        noise = PoissonNoise()
+        noise = PoissonNoise(weight)
     elseif startswith(string_id, "ordinal")
         n_values = parse(Int, string_id[8:end])
-        noise = OrdinalNoise(n_values)
+        noise = OrdinalNoise(weight, n_values)
     else
         throw(ArgumentError, string(string_id, " is not a valid noise model identifier"))
     end
@@ -504,6 +555,14 @@ function construct_noise(string_id::String)
 end
 
 
+function set_weight!(cn::CompositeNoise, weight::AbstractVector)
+    for (cr, n) in zip(cn.col_ranges, cn.noises)
+        n.weight .= weight[cr]
+    end
+end
 
+function set_weight!(nm, weight::AbstractVector)
+    nm.weight .= weight
+end
 
 

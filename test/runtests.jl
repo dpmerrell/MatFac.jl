@@ -16,7 +16,7 @@ function noise_model_tests()
         # Normal noise model
         normal_data = ones(M,N)
         normal_Z = zeros(M,N)
-        nn = MF.NormalNoise()
+        nn = MF.NormalNoise(N)
         @test MF.invlink(nn, normal_Z) == normal_Z
         @test MF.loss(nn, MF.invlink(nn, normal_Z), normal_data) == 0.5.*ones(M,N)
         @test Flux.gradient(x->sum(MF.loss(nn, MF.invlink(nn, x),normal_data)), normal_Z)[1] == -ones(M,N)
@@ -26,7 +26,7 @@ function noise_model_tests()
         # Logistic noise model
         logistic_data = ones(M,N)
         logistic_Z = zeros(M,N)
-        ln = MF.BernoulliNoise()
+        ln = MF.BernoulliNoise(N)
         @test MF.invlink(ln, logistic_Z) == 0.5 .* ones(M,N)
         @test Flux.gradient(x->sum(MF.invlink(ln, x)), logistic_Z)[1] == MF.invlink(ln,logistic_Z).*(1 .- MF.invlink(ln, logistic_Z))
         @test isapprox(MF.loss(ln, MF.invlink(ln, logistic_Z), logistic_data), log(2.0).*ones(M,N), atol=1e-6)
@@ -38,7 +38,7 @@ function noise_model_tests()
         # Poisson noise model
         poisson_data = ones(M,N)
         poisson_Z = zeros(M,N)
-        pn = MF.PoissonNoise()
+        pn = MF.PoissonNoise(N)
         @test MF.invlink(pn, poisson_Z) == ones(M,N)
         @test isapprox(MF.loss(pn, MF.invlink(pn, poisson_Z), poisson_data), ones(M,N), atol=1e-6)
         @test Flux.gradient(x->sum(MF.loss(pn, MF.invlink(pn, x), logistic_data)), poisson_Z)[1] == zeros(M,N)
@@ -49,7 +49,7 @@ function noise_model_tests()
                         1 2 3]
         ordinal_Z = [0 0 0;
                      0 0 0]
-        on = MF.OrdinalNoise([-Inf, -1, 1, Inf])
+        on = MF.OrdinalNoise(3, [-Inf, -1, 1, Inf])
         @test MF.invlink(on, ordinal_Z) == ordinal_Z 
         @test isapprox(MF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
                                                                -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
@@ -89,9 +89,9 @@ function noise_model_tests()
         @test composite_A[:,31:40]== MF.invlink(cn.noises[4], composite_Z[:,31:40])
 
         composite_l = MF.loss(cn, composite_A, composite_data)
-        @test composite_l[:,1:10] == MF.loss(nn, composite_A[:,1:10] , composite_data[:,1:10])
-        @test composite_l[:,11:20]== MF.loss(ln, composite_A[:,11:20], composite_data[:,11:20])
-        @test composite_l[:,21:30]== MF.loss(pn, composite_A[:,21:30], composite_data[:,21:30])
+        @test composite_l[:,1:10] == MF.loss(cn.noises[1], composite_A[:,1:10] , composite_data[:,1:10])
+        @test composite_l[:,11:20]== MF.loss(cn.noises[2], composite_A[:,11:20], composite_data[:,11:20])
+        @test composite_l[:,21:30]== MF.loss(cn.noises[3], composite_A[:,21:30], composite_data[:,21:30])
         @test composite_l[:,31:40]== MF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
 
         grad_cn, grad_Z = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, composite_data), 
@@ -245,8 +245,8 @@ function fit_tests()
         @test true
 
         # test whether the parameters were modified
-        @test !isapprox(model.X, X_start)
-        @test !isapprox(model.Y, Y_start)
+        @test !isapprox(cpu(model.X), cpu(X_start))
+        @test !isapprox(cpu(model.Y), cpu(Y_start))
         @test !isapprox(cpu(model.noise_model.noises[4].ext_thresholds), cpu(thresholds_start))
         
     end

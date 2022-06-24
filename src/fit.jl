@@ -8,13 +8,15 @@ export fit!
 
 """
     fit!(model::MatFacModel, D::AbstractMatrix;
-         capacity=10^8, 
+         scale_columns=true, capacity=10^8, 
          opt=ADAGrad(), lr=0.01, max_epochs=1000,
          abs_tol=1e-9, rel_tol=1e-6, 
          verbosity=1)
 
 Fit a MatFacModel to dataset D. 
 
+* If `scale_column_losses` is `true`, then we weight each
+  column's loss by the inverse of its variance.
 * `capacity` refers to memory capacity. It controls
   the size of minibatches during training. I.e., larger
   `capacity` means larger minibatches.
@@ -33,6 +35,7 @@ D = gpu(D)
 ```
 """
 function fit!(model::MatFacModel, D::AbstractMatrix;
+              scale_column_losses=true,
               capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
@@ -50,11 +53,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         end
     end
 
+    # Validate input size
     M_D, N_D = size(D)
     K, M = size(model.X)
     N = size(model.Y,2)
-
-    # Validate input size
     if (M != M_D)|(N != N_D) 
         throw(ArgumentError, string("Incompatible sizes! Data:", 
                                     size(D), 
@@ -64,11 +66,18 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     end
 
     inv_MN = 1.0/(M*N)
-    inv_MK = 1.0/(M*K)
-    inv_NK = 1.0/(N*K)
 
     col_batch_size = div(capacity,M)
     row_batch_size = div(capacity,N)
+    
+    # Reweight the column losses if necessary
+    if scale_column_losses
+        vprint("Re-weighting column losses\n")
+        _, variances = column_meanvar(D, M, row_batch_size)
+        variances = map(x->max(x,1e-4), variances)
+        weights = 1 ./ variances
+        set_weight!(model.noise_model, weights)
+    end
 
     # Prep the row and column transformations 
     col_layers = make_viewable(model.col_transform)
@@ -90,10 +99,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     col_layer_regs = make_viewable(model.col_transform_reg)
     row_layer_regs = make_viewable(model.row_transform_reg)
    
-    col_regularizer = (layers, reg) -> inv_NK*reg(layers)
-    row_regularizer = (layers, reg) -> inv_MK*reg(layers)
-    X_regularizer = (X, reg) -> inv_MK*reg(X)
-    Y_regularizer = (Y, reg) -> inv_NK*reg(Y)
+    col_layer_regularizer = (layers, reg) -> reg(layers)
+    row_layer_regularizer = (layers, reg) -> reg(layers)
+    X_regularizer = (X, reg) -> reg(X)
+    Y_regularizer = (Y, reg) -> reg(Y)
 
     # Initialize some objects to store gradients
     Y_grad = zero(model.Y)
@@ -146,7 +155,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                                    model.Y,
                                                    col_layers_view,
                                                    model.noise_model)
-    
+
             binop!(.+, Y_grad, grads[1])
             binop!(.+, col_layer_grads, grads[2])
             binop!(.+, noise_model_grads, grads[3])
@@ -165,7 +174,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.Y_reg, Y_reg_grad[2])
 
         # Accumulate layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(col_regularizer, col_layers, col_layer_regs)
+        regloss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
         loss += regloss
         binop!(.+, col_layer_grads, reg_grads[1])
         
@@ -213,7 +222,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.X_reg, X_reg_grads[2])
 
         # Accumulate the layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(row_regularizer, row_layers, row_layer_regs)
+        regloss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
         loss += regloss
         binop!(.+, row_layer_grads, reg_grads[1])
 
