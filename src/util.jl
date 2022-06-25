@@ -89,10 +89,26 @@ tozero(x) = zero(x)
 # Compute means and variances of data columns
 ###################################################
 
-function column_meanvar(D::AbstractMatrix, M::Number, row_batch_size::Number)
+function replace_if(a::T, v::T, b::Bool) where T
+    if b
+        return v
+    else
+        return a
+    end
+end
+
+function tozero!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+    map!((a, b) -> replace_if(a, T(0), b), A, A, idx) 
+end
+
+function tonan!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+    map!((a, b) -> replace_if(a, T(NaN), b), A, A, idx) 
+end
+
+function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
 
     nan_idx = isnan.(D)
-    D[nan_idx] .= 0
+    tozero!(D, nan_idx)
     nonnan_idx = (!).(nan_idx)
     M_vec = vec(sum(nonnan_idx, dims=1))
 
@@ -101,18 +117,20 @@ function column_meanvar(D::AbstractMatrix, M::Number, row_batch_size::Number)
     mean_vec = sum_vec ./ M_vec
 
     # Compute column variances
-    sumsq_vec = similar(D, size(D,2))
+    M, N = size(D)
+    sumsq_vec = similar(D, N)
+    sumsq_vec .= 0
     for row_batch in BatchIter(M, row_batch_size)
-        diff = D[row_batch,:] .- transpose(mean_vec)
-        batch_nan_idx = view(nan_idx, row_batch, :)
-        diff[batch_nan_idx] .= 0
+        diff = view(D, row_batch, :) .- transpose(mean_vec)
+        batch_nonnan_idx = view(nonnan_idx, row_batch, :)
+        diff .*= batch_nonnan_idx
         diff .*= diff
         sumsq_vec .+= vec(sum(diff, dims=1))
     end
     var_vec = sumsq_vec ./ (M_vec .+ 1) # Unbiased estimate
 
     # Restore NaN values
-    D[nan_idx] .= NaN
+    tonan!(D, nan_idx)
 
     return mean_vec, var_vec
 end

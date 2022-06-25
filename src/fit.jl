@@ -73,7 +73,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        _, variances = column_meanvar(D, M, row_batch_size)
+        _, variances = column_meanvar(D, row_batch_size)
         variances = map(x->max(x,1e-4), variances)
         weights = 1 ./ variances
         set_weight!(model.noise_model, weights)
