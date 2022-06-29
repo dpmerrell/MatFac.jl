@@ -36,7 +36,7 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
 
     nanvals = isnan.(D)
     diff = (Z .- D)
-    diff[nanvals] .= 0
+    tozero!(diff, nanvals)
     loss = diff.*diff
     loss .*= 0.5
     loss .*= transpose(nn.weight)
@@ -126,11 +126,11 @@ function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
     
     nanvals = isnan.(D)
     result = loss(bn,Z,D)
-    result[nanvals] .= 0
+    tozero!(result, nanvals)
         
     Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))
     Z_bar .*= transpose(bn.weight)
-    Z_bar[nanvals] .= 0
+    tozero!(Z_bar, nanvals)
 
     function loss_bernoulli_pullback(loss_bar)
         return ChainRulesCore.NoTangent(),
@@ -152,7 +152,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
     A = sigmoid(Z)
     diff = A .- D
     diff .*= transpose(bn.weight)
-    diff[nanvals] .= 0
+    tozero!(diff, nanvals)
 
     function invlinkloss_bernoulli_pullback(loss_bar)
 
@@ -163,7 +163,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
     end
     
     A .= loss(bn, A, D)
-    A[nanvals] .= 0
+    tozero!(A, nanvals)
 
     return sum(A), invlinkloss_bernoulli_pullback
 end
@@ -208,11 +208,11 @@ function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
     
     result = loss(pn, Z, D)
     nanvals = isnan.(D)
-    result[nanvals] .= 0
+    tozero!(result, nanvals)
         
     Z_bar = (1 .- D ./ Z)
     Z_bar .*= transpose(pn.weight)
-    Z_bar[nanvals] .= 0
+    tozero!(Z_bar, nanvals)
 
     function loss_poisson_pullback(loss_bar)
         return ChainRulesCore.NoTangent(),
@@ -235,7 +235,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
         
     diff = A .- D
     diff .*= transpose(pn.weight)
-    diff[nanvals] .= 0
+    tozero!(diff, nanvals)
 
     function invlinkloss_poisson_pullback(result_bar)
         return ChainRulesCore.NoTangent(),
@@ -245,7 +245,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
     end
 
     A .= loss(pn, A, D)
-    A[nanvals] .= 0
+    tozero!(A, nanvals)
     result = sum(A)
 
     return result, invlinkloss_poisson_pullback
@@ -323,13 +323,13 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
 
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
-    sig_r[nanvals] .= 1 # These settings ensure that the missing
-    sig_l[nanvals] .= 0 # data don't contribute to loss or gradients
+    toone!(sig_r, nanvals)  # These settings ensure that the missing
+    tozero!(sig_l, nanvals) # data don't contribute to loss or gradients
 
     sig_diff = sig_r .- sig_l
 
     nanvals .= (sig_diff .== 0)
-    sig_diff[nanvals] .= 1
+    toone!(sig_diff, nanvals) 
 
     function loss_ordinal_pullback(loss_bar)
 

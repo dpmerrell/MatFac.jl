@@ -105,6 +105,10 @@ function tonan!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
     map!((a, b) -> replace_if(a, T(NaN), b), A, A, idx) 
 end
 
+function toone!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+    map!((a, b) -> replace_if(a, T(1), b), A, A, idx) 
+end
+
 function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
 
     nan_idx = isnan.(D)

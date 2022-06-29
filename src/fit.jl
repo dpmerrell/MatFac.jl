@@ -6,6 +6,8 @@ AbstractOptimiser = Flux.Optimise.AbstractOptimiser
 
 export fit!
 
+
+
 """
     fit!(model::MatFacModel, D::AbstractMatrix;
          scale_columns=true, capacity=10^8, 
@@ -168,7 +170,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
         loss += regloss
         binop!(.+, Y_grad, Y_reg_grad[1])
-        
+       
         # Update Y and the Y regularizer
         update!(opt, model.Y, Y_grad)
         update!(opt, model.Y_reg, Y_reg_grad[2])
@@ -192,7 +194,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         ######################################
         # Iterate through the COLUMNS of data
         for col_batch in BatchIter(N, col_batch_size)
-          
+            
             D_v = view(D, :, col_batch)
             noise_view = view(model.noise_model, col_batch)
             Y_view = view(model.Y, :, col_batch)
