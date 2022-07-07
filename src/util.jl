@@ -97,15 +97,15 @@ function replace_if(a::T, v::T, b::Bool) where T
     end
 end
 
-function tozero!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+function tozero!(A::AbstractArray{T,K}, idx::AbstractArray{Bool,K}) where T where K
     map!((a, b) -> replace_if(a, T(0), b), A, A, idx) 
 end
 
-function tonan!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+function tonan!(A::AbstractArray{T,K}, idx::AbstractArray{Bool,K}) where T where K
     map!((a, b) -> replace_if(a, T(NaN), b), A, A, idx) 
 end
 
-function toone!(A::AbstractMatrix{T}, idx::AbstractMatrix{Bool}) where T
+function toone!(A::AbstractArray{T,K}, idx::AbstractArray{Bool,K}) where T where K
     map!((a, b) -> replace_if(a, T(1), b), A, A, idx) 
 end
 
@@ -119,6 +119,8 @@ function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
     # Compute column means
     sum_vec = vec(sum(D, dims=1))
     mean_vec = sum_vec ./ M_vec
+    mean_nan_idx = isnan.(mean_vec)
+    tozero!(mean_vec, mean_nan_idx)
 
     # Compute column variances
     M, N = size(D)
@@ -132,7 +134,7 @@ function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
         sumsq_vec .+= vec(sum(diff, dims=1))
     end
     var_vec = sumsq_vec ./ (M_vec .+ 1) # Unbiased estimate
-
+    
     # Restore NaN values
     tonan!(D, nan_idx)
 

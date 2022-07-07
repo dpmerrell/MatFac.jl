@@ -187,7 +187,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         # Update the noise model
         update!(opt, model.noise_model, noise_model_grads)
 
-
         X_grad .= 0
         row_layer_grads = fmap(tozero, row_layer_grads)
 
