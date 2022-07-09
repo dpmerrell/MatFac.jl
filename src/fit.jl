@@ -42,7 +42,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
               abs_tol::Number=1e-9, rel_tol::Number=1e-6,
-              verbosity::Integer=1)
+              tol_max_iters::Number=3, verbosity::Integer=1)
     
     #############################
     # Preparations
@@ -128,6 +128,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     #############################
     epoch = 1
     t_start = time()
+    tol_iters = 0
     while epoch <= max_epochs
 
         vprint("Epoch ", epoch,":  ")
@@ -238,15 +239,21 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         # Check termination conditions
         loss_diff = prev_loss - loss 
         if loss_diff < abs_tol
-            vprint("Terminated: reached abs_tol<",abs_tol, "\n"; level=0)
-            break
+            tol_iters += 1
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0)
         elseif loss_diff/loss < abs_tol
-            vprint("Terminated: reached rel_tol<",rel_tol, "\n"; level=0)
-            break
+            tol_iters += 1
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
         else
             prev_loss = loss
+            tol_iters = 0
             epoch += 1
         end
+        if tol_iters >= tol_max_iters
+            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0)
+            break
+        end
+
     end
     if epoch >= max_epochs 
         vprint("Terminated: reached max_epochs=",max_epochs, "\n"; level=0)
