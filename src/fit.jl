@@ -42,7 +42,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
               abs_tol::Number=1e-9, rel_tol::Number=1e-6,
-              tol_max_iters::Number=3, verbosity::Integer=1)
+              tol_max_iters::Number=3, verbosity::Integer=1,
+              callback=nothing)
     
     #############################
     # Preparations
@@ -119,6 +120,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         opt = Flux.Optimise.ADAGrad(lr)
     end
 
+    # If no callback is provided, construct
+    # a do-nothing function
+    if callback == nothing
+        callback = (args...) -> nothing
+    end
+
     # Track the loss
     prev_loss = Inf
     loss = Inf
@@ -134,6 +141,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         vprint("Epoch ", epoch,":  ")
 
         loss = 0.0
+        data_loss = 0.0
 
         Y_grad .= 0
         col_layer_grads = fmap(tozero, col_layer_grads)
@@ -163,13 +171,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             binop!(.+, col_layer_grads, grads[2])
             binop!(.+, noise_model_grads, grads[3])
 
-            loss += batchloss
+            data_loss += batchloss
 
         end
 
         # Accumulate Y regularizer gradient
-        regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
-        loss += regloss
+        Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
         binop!(.+, Y_grad, Y_reg_grad[1])
        
         # Update Y and the Y regularizer
@@ -177,8 +184,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.Y_reg, Y_reg_grad[2])
 
         # Accumulate layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
-        loss += regloss
+        col_layer_reg_loss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
         binop!(.+, col_layer_grads, reg_grads[1])
         
         # Update layers and layer regularizers
@@ -210,13 +216,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             binop!(.+, X_grad, g[1])
             binop!(.+, row_layer_grads, g[2])
         
-            loss += batchloss
+            data_loss += batchloss
         end
 
         # Accumulate X regularizer gradients
-        regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
+        X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
 
-        loss += regloss
         binop!(.+, X_grad, X_reg_grads[1])
 
         # Update X and the X regularizer
@@ -224,13 +229,21 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.X_reg, X_reg_grads[2])
 
         # Accumulate the layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
-        loss += regloss
+        row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
         binop!(.+, row_layer_grads, reg_grads[1])
 
         # Update the layers and regularizers
         update!(opt, row_layers, row_layer_grads)
         update!(opt, row_layer_regs, reg_grads[2])
+
+        # Sum the loss components (halve the data loss
+        # to account for row-pass and col-pass)
+        loss = (0.5*data_loss + row_layer_reg_loss 
+                + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
+
+        # Execute the callback (may or may not mutate the model)
+        callback(model, epoch, data_loss, X_reg_loss, Y_reg_loss,
+                               row_layer_reg_loss, col_layer_reg_loss)
 
         # Report the loss
         elapsed = time()-t_start

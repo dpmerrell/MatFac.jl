@@ -8,6 +8,7 @@ include("util.jl")
 include("viewable.jl")
 include("noise_models.jl")
 include("model.jl")
+include("callbacks.jl")
 include("fit.jl")
 
 end

@@ -252,7 +252,47 @@ function fit_tests()
     end
 end
 
+function callback_tests()
 
+    @testset "Callbacks" begin
+
+        M = 20
+        N = 40
+        K = 3
+        n_loss_types = 4
+        n_logistic = div(N,n_loss_types)
+        n_ordinal = div(N,n_loss_types)
+        n_poisson = div(N,n_loss_types)
+        n_normal = div(N,n_loss_types) 
+
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["normal"], n_normal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["ordinal5"], n_ordinal)];
+        
+
+        composite_data = zeros(M,N)
+        composite_data[:,21:30] .= 1
+        composite_data[:,31:40] .= 3
+
+        #################################
+        # CPU TESTS
+        model = MF.MatFacModel(M,N,K, col_losses)
+        X_start = deepcopy(model.X)
+        Y_start = deepcopy(model.Y)
+        thresholds_start = deepcopy(model.noise_model.noises[4].ext_thresholds)
+
+        # Construct a HistoryCallback 
+        hcb = MF.HistoryCallback()
+
+        # test whether the HistoryCallback records history correctly
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, callback=hcb)
+        @test length(hcb.history) == 10
+
+
+    end
+
+end
 
 function io_tests()
 
@@ -294,6 +334,7 @@ function main()
     model_tests()
     update_tests()
     fit_tests()
+    callback_tests()
     io_tests()
 
 end
