@@ -253,9 +253,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         loss_diff = prev_loss - loss 
         if loss_diff < abs_tol
             tol_iters += 1
+            epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0)
         elseif loss_diff/loss < abs_tol
             tol_iters += 1
+            epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
         else
             prev_loss = loss
