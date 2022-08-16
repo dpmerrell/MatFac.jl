@@ -102,10 +102,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     col_layer_regs = make_viewable(model.col_transform_reg)
     row_layer_regs = make_viewable(model.row_transform_reg)
    
-    col_layer_regularizer = (layers, reg) -> reg(layers)
-    row_layer_regularizer = (layers, reg) -> reg(layers)
-    X_regularizer = (X, reg) -> reg(X)
-    Y_regularizer = (Y, reg) -> reg(Y)
+    col_layer_regularizer = (layers, reg) -> model.lambda_col*reg(layers)
+    row_layer_regularizer = (layers, reg) -> model.lambda_row*reg(layers)
+    X_regularizer = (X, reg) -> model.lambda_X*reg(X)
+    Y_regularizer = (Y, reg) -> model.lambda_Y*reg(Y)
 
     # Initialize some objects to store gradients
     Y_grad = zero(model.Y)
