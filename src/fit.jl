@@ -260,10 +260,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
         else
-            prev_loss = loss
             tol_iters = 0
             epoch += 1
         end
+        prev_loss = loss
+
         if tol_iters >= tol_max_iters
             vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0)
             break
