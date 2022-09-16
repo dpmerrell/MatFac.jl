@@ -80,7 +80,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         weights = abs.(1 ./ col_errors)
         weights = map(x -> max(x, 1e-5), weights)
         weights[ (!isfinite).(weights) ] .= 1
-        println(string("WEIGHTS: ", weights))
         set_weight!(model.noise_model, weights)
     end
 
