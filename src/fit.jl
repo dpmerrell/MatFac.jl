@@ -76,9 +76,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        _, variances = column_meanvar(D, row_batch_size)
-        variances = map(x->max(x,1e-4), variances)
-        weights = 1 ./ variances
+        col_errors = column_avg_loss(model.noise_model, D, row_batch_size)
+        weights = abs.(1 ./ col_errors)
+        weights = map(x -> max(x, 1e-5), weights)
+        weights[ (!isfinite).(weights) ] .= 1
+        println(string("WEIGHTS: ", weights))
         set_weight!(model.noise_model, weights)
     end
 
@@ -272,7 +274,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
     end
     if epoch >= max_epochs 
-        vprint("Terminated: reached max_epochs=",max_epochs, "\n"; level=0)
+        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=0)
     end
 
     #############################

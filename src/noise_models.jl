@@ -76,7 +76,6 @@ function BernoulliNoise(N::Integer)
 end
 
 # inverse link function
-#sigmoid(x) = 1 ./ (1 .+ exp.(-x))
 function sigmoid(x)
     y = -x
     y .= exp.(y)
@@ -107,13 +106,10 @@ end
 # Loss function
 
 function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    Z2 = 1 .- Z .+ 1e-8
-    Z2 .= log.(Z2)
-    Z2 .*= (1 .- D)
+    Z2 = (1 .- D)
+    Z2 .*= log.(1 .- Z .+ 1e-8)
     
-    Z3 = Z .+ 1e-8
-    Z3 .= log.(Z3)
-    Z3 .*= D
+    Z3 = D.*log.(Z .+ 1e-8)
 
     Z2 .+= Z3
     Z2 .*= -1
@@ -124,8 +120,8 @@ end
 
 function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
     
-    nanvals = isnan.(D)
     result = loss(bn,Z,D)
+    nanvals = isnan.(result)
     tozero!(result, nanvals)
         
     Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))

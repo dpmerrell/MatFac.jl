@@ -85,10 +85,8 @@ tozero(x::Nothing) = nothing
 tozero(x) = zero(x)
 
 
-###################################################
-# Compute means and variances of data columns
-###################################################
-
+# Define some other useful array operations.
+# CUDA.jl will compile these into efficient GPU kernels.
 function replace_if(a::T, v::T, b::Bool) where T
     if b
         return v
@@ -108,6 +106,28 @@ end
 function toone!(A::AbstractArray{T,K}, idx::AbstractArray{Bool,K}) where T where K
     map!((a, b) -> replace_if(a, T(1), b), A, A, idx) 
 end
+
+
+###################################################
+# Compute means and variances of data columns
+###################################################
+
+function column_means(D::AbstractMatrix, row_batch_size::Number)
+
+    nan_idx = isnan.(D)
+    tozero!(D, nan_idx)
+    nonnan_idx = (!).(nan_idx)
+    M_vec = vec(sum(nonnan_idx, dims=1))
+
+    # Compute column means
+    sum_vec = vec(sum(D, dims=1))
+    mean_vec = sum_vec ./ M_vec
+    mean_nan_idx = isnan.(mean_vec)
+    tozero!(mean_vec, mean_nan_idx)
+
+    return mean_vec
+end
+
 
 function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
 
@@ -139,6 +159,29 @@ function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
     tonan!(D, nan_idx)
 
     return mean_vec, var_vec
+end
+
+
+function column_avg_loss(noise_model, D::AbstractMatrix, row_batch_size::Number)
+
+    M, N = size(D)
+    col_mean_vec = column_means(D, row_batch_size)
+
+    col_errors = zeros(N)
+    col_nnz = zeros(N)
+    for row_batch in BatchIter(M, row_batch_size)
+        batch_D = view(D, row_batch, :)
+        batch_error = loss(noise_model, transpose(col_mean_vec), batch_D)
+
+        batch_nan = isnan.(batch_D)
+        tozero!(batch_error, batch_nan)
+
+        col_errors += reshape(sum(batch_error, dims=1),:)
+        col_nnz += reshape(sum( (!).(batch_nan), dims=1),:)
+    end
+    col_errors ./= col_nnz
+
+    return col_errors
 end
 
 
