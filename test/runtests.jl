@@ -45,11 +45,11 @@ function noise_model_tests()
         @test Flux.gradient(x->MF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
 
         # Ordinal noise model
-        ordinal_data = [1 2 3;
-                        1 2 3]
-        ordinal_Z = [0 0 0;
-                     0 0 0]
-        on = MF.OrdinalNoise(3, [-Inf, -1, 1, Inf])
+        ordinal_data = [1. 2. 3.;
+                        1. 2. 3.]
+        ordinal_Z = [0. 0. 0.;
+                     0. 0. 0.]
+        on = MF.OrdinalNoise(3, [-Inf, -1., 1., Inf])
         @test MF.invlink(on, ordinal_Z) == ordinal_Z 
         @test isapprox(MF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
                                                                -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],

@@ -37,12 +37,14 @@ D = gpu(D)
 ```
 """
 function fit!(model::MatFacModel, D::AbstractMatrix;
-              scale_column_losses=true,
               capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
               abs_tol::Number=1e-9, rel_tol::Number=1e-6,
-              tol_max_iters::Number=3, verbosity::Integer=1,
+              tol_max_iters::Number=3, 
+              scale_column_losses=true,
+              calibrate_losses=false,
+              verbosity::Integer=1,
               callback=nothing)
     
     #############################
