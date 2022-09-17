@@ -115,7 +115,6 @@ function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrat
         Z2 .-= map(cross_entropy_kernel, D, D)
     end
     Z2 .*= transpose(bn.weight)
-
     return Z2 
 end
 
@@ -208,7 +207,8 @@ function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=
     if calibrate
         pl .-= map(poisson_loss_kernel, D, D)
     end
-    return pl .* transpose(pn.weight)
+    pl .*= transpose(pn.weight)
+    return 
 
 end
 
@@ -301,7 +301,7 @@ function invlink(on::OrdinalNoise, A)
     return A
 end
 
-function ordinal_kernel(z::T, d::Number, thresholds::AbstractVector{<:Number}) where T <: Number
+function ordinal_loss_kernel(z::T, d::Number, thresholds::AbstractVector{<:Number}) where T <: Number
     d_idx = round(UInt8,d)
     l_thresh = thresholds[d_idx]
     r_thresh = thresholds[d_idx .+ UInt8(1)]
@@ -311,9 +311,9 @@ end
 
 function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
 
-    l = map((z,d) -> ordinal_kernel(z, d, on.ext_thresholds), Z, D)
+    l = map((z,d) -> ordinal_loss_kernel(z, d, on.ext_thresholds), Z, D)
     if calibrate
-        l .-= map(d -> ordinal_kernel(d, d, on.ext_thresholds), D) 
+        l .-= map(d -> ordinal_loss_kernel(d, d, on.ext_thresholds), D) 
     end
     l .*= transpose(on.weight)
 
@@ -377,11 +377,15 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=
     end
     
     l = -log.(sig_diff .+ 1e-15)
-
     if calibrate
-        l .-= map(d -> ordinal_kernel(d, d, on.ext_thresholds), D)
+        th_max = on.ext_thresholds[end-1] + 1e3
+        th_min = on.ext_thresholds[2] - 1e3
+        map!(th -> isfinite(th) ? th : th_max, r_thresh, r_thresh)
+        map!(th -> isfinite(th) ? th : th_min, l_thresh, l_thresh)
+        r_thresh .+= l_thresh
+        r_thresh .*= 0.5
+        l .-= map((v,d) -> ordinal_loss_kernel(v, d, on.ext_thresholds), r_thresh, D)
     end
-
     l .*= transpose(on.weight)
 
     return l, loss_ordinal_pullback

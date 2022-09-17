@@ -99,7 +99,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                                     transpose(X)*Y
                                                    )
                                                   ),
-                                               D)
+                                               D; calibrate=calibrate_losses)
 
     # Prep the regularizers
     col_layer_regs = make_viewable(model.col_transform_reg)
@@ -174,8 +174,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             binop!(.+, col_layer_grads, grads[2])
             binop!(.+, noise_model_grads, grads[3])
 
-            data_loss += batchloss
-
         end
 
         # Accumulate Y regularizer gradient
@@ -241,7 +239,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
         # Sum the loss components (halve the data loss
         # to account for row-pass and col-pass)
-        loss = (0.5*data_loss + row_layer_reg_loss 
+        loss = (data_loss + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
 
         # Execute the callback (may or may not mutate the model)
@@ -258,7 +256,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             tol_iters += 1
             epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0)
-        elseif loss_diff/loss < abs_tol
+        elseif loss_diff/abs(loss) < abs_tol
             tol_iters += 1
             epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
