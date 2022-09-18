@@ -208,7 +208,7 @@ function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=
         pl .-= map(poisson_loss_kernel, D, D)
     end
     pl .*= transpose(pn.weight)
-    return 
+    return pl 
 
 end
 
