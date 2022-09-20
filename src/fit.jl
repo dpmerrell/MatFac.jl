@@ -116,7 +116,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     noise_model_grads = fmapstructure(tozero, rec_trainable(model.noise_model))
 
     # If no optimiser is provided, initialize
-    # the default (an ADAGrad optimiser)
+    # the default (an AdaGrad optimiser)
     if opt == nothing
         opt = Flux.Optimise.AdaGrad(lr)
     end

@@ -164,7 +164,7 @@ function update_tests()
 
         f = x -> sum(x.^2)
         grads = Zygote.gradient(f, A)
-        opt = Flux.Optimise.ADAGrad()
+        opt = Flux.Optimise.AdaGrad()
 
         Flux.Optimise.update!(opt, A, grads[1])
         @test !isapprox(A, start_A)
