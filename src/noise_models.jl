@@ -82,6 +82,7 @@ function sigmoid(X)
     return map(sigmoid_kernel, X)
 end
 
+# Efficient custom rrule
 function ChainRulesCore.rrule(::typeof(sigmoid), x)
     
     y = sigmoid(x)
@@ -109,8 +110,12 @@ function cross_entropy_kernel(p::T, d::Number) where T <: Number
     return -d_t * log(p + eps_t) - (1-d_t) * log(1 - p + eps_t) 
 end
 
+
 function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
     Z2 = map(cross_entropy_kernel, Z, D)
+
+    # The `calibrate` kwarg indicates whether to subtract
+    # the minimum possible loss value from the result.
     if calibrate
         Z2 .-= map(cross_entropy_kernel, D, D)
     end
@@ -309,16 +314,31 @@ function ordinal_loss_kernel(z::T, d::Number, thresholds::AbstractVector{<:Numbe
     return -log(sigmoid_kernel(r_thresh - z) - sigmoid_kernel(l_thresh - z) + eps_t)
 end
 
+function ordinal_calibration_kernel(d::T, thresholds::AbstractVector{<:Number}) where T <: Number
+    d_idx = round(UInt8,d)
+    th_max = thresholds[end-1] + 1e3
+    th_min = thresholds[2] - 1e3
+    l_thresh = thresholds[d_idx]
+    r_thresh = thresholds[d_idx + UInt8(1)]
+    r_thresh = isfinite(r_thresh) ? r_thresh : th_max
+    l_thresh = isfinite(l_thresh) ? l_thresh : th_min
+    z = (r_thresh + l_thresh)*0.5
+    eps_t = T(1e-15)
+    return T(-log(sigmoid_kernel(r_thresh - z) - sigmoid_kernel(l_thresh - z) + eps_t))
+end
+
+
 function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
 
     l = map((z,d) -> ordinal_loss_kernel(z, d, on.ext_thresholds), Z, D)
     if calibrate
-        l .-= map(d -> ordinal_loss_kernel(d, d, on.ext_thresholds), D) 
+        l .-= map(d -> ordinal_calibration_kernel(d, on.ext_thresholds), D) 
     end
     l .*= transpose(on.weight)
 
     return l
 end
+
 
 function summary_str(A::AbstractArray, name::String)
     return string(name, ": ", size(A), " ", typeof(A))
@@ -378,13 +398,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=
     
     l = -log.(sig_diff .+ 1e-15)
     if calibrate
-        th_max = on.ext_thresholds[end-1] + 1e3
-        th_min = on.ext_thresholds[2] - 1e3
-        map!(th -> isfinite(th) ? th : th_max, r_thresh, r_thresh)
-        map!(th -> isfinite(th) ? th : th_min, l_thresh, l_thresh)
-        r_thresh .+= l_thresh
-        r_thresh .*= 0.5
-        l .-= map((v,d) -> ordinal_loss_kernel(v, d, on.ext_thresholds), r_thresh, D)
+        l .-= map(d -> ordinal_calibration_kernel(d, on.ext_thresholds), D)
     end
     l .*= transpose(on.weight)
 
