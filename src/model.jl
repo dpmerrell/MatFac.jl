@@ -15,6 +15,12 @@ mutable struct MatFacModel
     row_transform_reg::Any       # parameters)
     col_transform_reg::Any
     noise_model_reg::Any
+
+    lambda_X::Number             # Regularizer weights
+    lambda_Y::Number
+    lambda_row::Number
+    lambda_col::Number
+    lambda_noise::Number
 end
 
 @functor MatFacModel
@@ -27,7 +33,10 @@ function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
                      X_reg=x->0.0, Y_reg=x->0.0,
                      row_transform_reg=x->0.0,
                      col_transform_reg=x->0.0,
-                     noise_model_reg=x->0.0)
+                     noise_model_reg=x->0.0,
+                     lambda_X=1.0, lambda_Y=1.0,
+                     lambda_row=1.0, lambda_col=1.0,
+                     lambda_noise=1.0)
 
     row_transform = make_viewable(row_transform)
     col_transform = make_viewable(col_transform)
@@ -39,7 +48,10 @@ function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
                        X_reg, Y_reg,
                        row_transform_reg, 
                        col_transform_reg, 
-                       noise_model_reg)
+                       noise_model_reg,
+                       lambda_X, lambda_Y,
+                       lambda_row, lambda_col,
+                       lambda_noise)
 
 end
 
@@ -99,17 +111,32 @@ function MatFacModel(M::Integer, N::Integer, K::Integer,
 end
 
 
-
-function (bm::MatFacModel)()
-    return invlink(bm.noise_model,
-            bm.col_transform(
-             bm.row_transform(
-               transpose(bm.X)*bm.Y
-             )
-            )
+function forward(X, Y, row_trans, col_trans, noise_model)
+    return invlink(noise_model, 
+               col_trans(
+                   row_trans(
+                       transpose(X)*Y
+                   )
+               )
            )
 end
 
+
+function data_loss(X, Y, row_trans, col_trans, noise_model, D; kwargs...)
+    return invlinkloss(noise_model, 
+               col_trans(
+                   row_trans(
+                       transpose(X)*Y
+                   )
+               ),
+               D; kwargs...
+           )
+end
+
+
+function (bm::MatFacModel)()
+    return forward(bm.X, bm.Y, bm.row_transform, bm.col_transform, bm.noise_model) 
+end
 
 
 function view(bm::MatFacModel, idx1, idx2)
@@ -120,6 +147,7 @@ function view(bm::MatFacModel, idx1, idx2)
                             view(bm.noise_model, idx2),
                             nothing, nothing, nothing,
                             nothing, nothing,
+                            0.0, 0.0, 0.0, 0.0, 0.0
                            )
 
 end
@@ -148,6 +176,14 @@ function Base.:(==)(a::T, b::T) where T <: EqTypes
         end
     end
     return true
+end
+
+
+################################################
+# Deepcopy operation
+function Base.deepcopy(a::T) where T <: EqTypes
+    field_values = [getfield(a, fn) for fn in fieldnames(T)]
+    return T(field_values...)
 end
 
 

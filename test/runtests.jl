@@ -45,11 +45,11 @@ function noise_model_tests()
         @test Flux.gradient(x->MF.invlinkloss(pn, x, logistic_data), poisson_Z)[1] == zeros(M,N)
 
         # Ordinal noise model
-        ordinal_data = [1 2 3;
-                        1 2 3]
-        ordinal_Z = [0 0 0;
-                     0 0 0]
-        on = MF.OrdinalNoise(3, [-Inf, -1, 1, Inf])
+        ordinal_data = [1. 2. 3.;
+                        1. 2. 3.]
+        ordinal_Z = [0. 0. 0.;
+                     0. 0. 0.]
+        on = MF.OrdinalNoise(3, [-Inf, -1., 1., Inf])
         @test MF.invlink(on, ordinal_Z) == ordinal_Z 
         @test isapprox(MF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
                                                                -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
@@ -252,7 +252,47 @@ function fit_tests()
     end
 end
 
+function callback_tests()
 
+    @testset "Callbacks" begin
+
+        M = 20
+        N = 40
+        K = 3
+        n_loss_types = 4
+        n_logistic = div(N,n_loss_types)
+        n_ordinal = div(N,n_loss_types)
+        n_poisson = div(N,n_loss_types)
+        n_normal = div(N,n_loss_types) 
+
+        col_losses = [repeat(["bernoulli"], n_logistic);
+                      repeat(["normal"], n_normal);
+                      repeat(["poisson"], n_poisson);
+                      repeat(["ordinal5"], n_ordinal)];
+        
+
+        composite_data = zeros(M,N)
+        composite_data[:,21:30] .= 1
+        composite_data[:,31:40] .= 3
+
+        #################################
+        # CPU TESTS
+        model = MF.MatFacModel(M,N,K, col_losses)
+        X_start = deepcopy(model.X)
+        Y_start = deepcopy(model.Y)
+        thresholds_start = deepcopy(model.noise_model.noises[4].ext_thresholds)
+
+        # Construct a HistoryCallback 
+        hcb = MF.HistoryCallback()
+
+        # test whether the HistoryCallback records history correctly
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, callback=hcb)
+        @test length(hcb.history) == 10
+
+
+    end
+
+end
 
 function io_tests()
 
@@ -294,6 +334,7 @@ function main()
     model_tests()
     update_tests()
     fit_tests()
+    callback_tests()
     io_tests()
 
 end

@@ -24,7 +24,7 @@ function invlink(::NormalNoise, A::AbstractMatrix)
 end
 
 
-function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
+function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix; kwargs...)
     diff = (Z .- D)
     diff .*= diff
     diff .*= 0.5
@@ -32,7 +32,7 @@ function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix)
 end
 
 
-function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D; kwargs...)
 
     nanvals = isnan.(D)
     diff = (Z .- D)
@@ -53,7 +53,7 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D)
     return loss, loss_normal_pullback
 end
 
-invlinkloss(nn::NormalNoise, Z, D) = sum(loss(nn::NormalNoise, Z, D))
+invlinkloss(nn::NormalNoise, Z, D; kwargs...) = sum(loss(nn::NormalNoise, Z, D; kwargs...))
 
 function view(nn::NormalNoise, idx)
     return NormalNoise(view(nn.weight, idx))
@@ -76,13 +76,10 @@ function BernoulliNoise(N::Integer)
 end
 
 # inverse link function
-#sigmoid(x) = 1 ./ (1 .+ exp.(-x))
-function sigmoid(x)
-    y = -x
-    y .= exp.(y)
-    y .+= 1
-    y .= (1 ./ y)
-    return y
+sigmoid_kernel(x) = 1 / (1 + exp(-x))
+
+function sigmoid(X)
+    return map(sigmoid_kernel, X)
 end
 
 function ChainRulesCore.rrule(::typeof(sigmoid), x)
@@ -106,26 +103,26 @@ end
 
 # Loss function
 
-function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    Z2 = 1 .- Z .+ 1e-8
-    Z2 .= log.(Z2)
-    Z2 .*= (1 .- D)
-    
-    Z3 = Z .+ 1e-8
-    Z3 .= log.(Z3)
-    Z3 .*= D
+function cross_entropy_kernel(p::T, d::Number) where T <: Number
+    d_t = T(d)
+    eps_t = T(1e-15)
+    return -d_t * log(p + eps_t) - (1-d_t) * log(1 - p + eps_t) 
+end
 
-    Z2 .+= Z3
-    Z2 .*= -1
+function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
+    Z2 = map(cross_entropy_kernel, Z, D)
+    if calibrate
+        Z2 .-= map(cross_entropy_kernel, D, D)
+    end
     Z2 .*= transpose(bn.weight)
-    return Z2
+    return Z2 
 end
 
 
-function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D; kwargs...)
     
-    nanvals = isnan.(D)
-    result = loss(bn,Z,D)
+    result = loss(bn,Z,D; kwargs...)
+    nanvals = isnan.(result)
     tozero!(result, nanvals)
         
     Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))
@@ -143,10 +140,10 @@ function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D)
 end
 
 
-invlinkloss(bn::BernoulliNoise, Z, D) = sum(loss(bn, invlink(bn, Z), D))
+invlinkloss(bn::BernoulliNoise, Z, D; kwargs...) = sum(loss(bn, invlink(bn, Z), D; kwargs...))
 
 
-function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; kwargs...)
 
     nanvals = isnan.(D) # Handle missing values
     A = sigmoid(Z)
@@ -162,7 +159,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
     
-    A .= loss(bn, A, D)
+    A .= loss(bn, A, D; kwargs...)
     tozero!(A, nanvals)
 
     return sum(A), invlinkloss_bernoulli_pullback
@@ -198,15 +195,27 @@ end
 
 
 # Loss function
+function poisson_loss_kernel(z::T, d::Number) where T <: Number
+    d_t = T(d)
+    eps_t = T(1e-15)
+    return z - d*log(z + eps_t)
+end
 
-function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix)
-    return (Z .- D.*log.(Z .+ 1e-8)) .* transpose(pn.weight)
+function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
+    
+    pl = map(poisson_loss_kernel, Z, D) 
+    if calibrate
+        pl .-= map(poisson_loss_kernel, D, D)
+    end
+    pl .*= transpose(pn.weight)
+    return pl 
+
 end
 
 
-function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D; kwargs...)
     
-    result = loss(pn, Z, D)
+    result = loss(pn, Z, D; kwargs...)
     nanvals = isnan.(D)
     tozero!(result, nanvals)
         
@@ -225,10 +234,10 @@ function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D)
 end
 
 
-invlinkloss(pn::PoissonNoise, Z, D) = loss(pn, invlink(pn, Z), D)
+invlinkloss(pn::PoissonNoise, Z, D; kwargs...) = sum(loss(pn, invlink(pn, Z), D; kwargs...))
 
 
-function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D; kwargs...)
 
     nanvals = isnan.(D)
     A = invlink(pn, Z)
@@ -244,7 +253,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
 
-    A .= loss(pn, A, D)
+    A .= loss(pn, A, D; kwargs...)
     tozero!(A, nanvals)
     result = sum(A)
 
@@ -292,16 +301,23 @@ function invlink(on::OrdinalNoise, A)
     return A
 end
 
+function ordinal_loss_kernel(z::T, d::Number, thresholds::AbstractVector{<:Number}) where T <: Number
+    d_idx = round(UInt8,d)
+    l_thresh = thresholds[d_idx]
+    r_thresh = thresholds[d_idx .+ UInt8(1)]
+    eps_t = T(1e-15)
+    return -log(sigmoid_kernel(r_thresh - z) - sigmoid_kernel(l_thresh - z) + eps_t)
+end
 
-function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix)
+function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
 
-    D_idx = round.(UInt8, D)
-    l_thresh = on.ext_thresholds[D_idx]
-    r_thresh = on.ext_thresholds[D_idx .+ UInt8(1)]
-    loss = -log.(sigmoid(r_thresh .- Z) .- sigmoid(l_thresh .- Z) .+ 1e-8)
-    loss .*= transpose(on.weight)
+    l = map((z,d) -> ordinal_loss_kernel(z, d, on.ext_thresholds), Z, D)
+    if calibrate
+        l .-= map(d -> ordinal_loss_kernel(d, d, on.ext_thresholds), D) 
+    end
+    l .*= transpose(on.weight)
 
-    return loss
+    return l
 end
 
 function summary_str(A::AbstractArray, name::String)
@@ -311,7 +327,7 @@ end
 
 nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
-function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
+function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=false)
 
     nanvals = isnan.(D)
     D_idx = nanround.(D)
@@ -360,14 +376,23 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D)
                ChainRulesCore.NoTangent()
     end
     
-    loss = -log.(sig_diff .+ 1e-8)
-    loss .*= transpose(on.weight)
+    l = -log.(sig_diff .+ 1e-15)
+    if calibrate
+        th_max = on.ext_thresholds[end-1] + 1e3
+        th_min = on.ext_thresholds[2] - 1e3
+        map!(th -> isfinite(th) ? th : th_max, r_thresh, r_thresh)
+        map!(th -> isfinite(th) ? th : th_min, l_thresh, l_thresh)
+        r_thresh .+= l_thresh
+        r_thresh .*= 0.5
+        l .-= map((v,d) -> ordinal_loss_kernel(v, d, on.ext_thresholds), r_thresh, D)
+    end
+    l .*= transpose(on.weight)
 
-    return loss, loss_ordinal_pullback
+    return l, loss_ordinal_pullback
 end
 
 # Remember: inverse link == identity function
-invlinkloss(on::OrdinalNoise, Z, D) = sum(loss(on, Z, D))
+invlinkloss(on::OrdinalNoise, Z, D; kwargs...) = sum(loss(on, Z, D; kwargs...))
 
 
 function view(on::OrdinalNoise, idx)
@@ -431,15 +456,15 @@ end
 
 
 invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
-loss(cn::CompositeNoise, Z, D) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng)), cn.noises, cn.col_ranges)...)
-invlinkloss(cn::CompositeNoise, A, D) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng)), cn.noises, cn.col_ranges))
+loss(cn::CompositeNoise, Z, D; kwargs...) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
+invlinkloss(cn::CompositeNoise, A, D; kwargs...) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges))
 
-function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D)
+function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D; kwargs...)
 
     result = 0
     pullbacks = []
     for (noise, rng) in zip(cn.noises, cn.col_ranges)
-        lss, pb = Zygote.pullback(invlinkloss, noise, view(A,:,rng), view(D, :, rng))
+        lss, pb = Zygote.pullback((n,a,d) -> invlinkloss(n,a,d; kwargs...), noise, view(A,:,rng), view(D, :, rng))
         result += lss
         push!(pullbacks, pb)
     end

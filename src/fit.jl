@@ -37,12 +37,15 @@ D = gpu(D)
 ```
 """
 function fit!(model::MatFacModel, D::AbstractMatrix;
-              scale_column_losses=true,
               capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
               abs_tol::Number=1e-9, rel_tol::Number=1e-6,
-              tol_max_iters::Number=3, verbosity::Integer=1)
+              tol_max_iters::Number=3, 
+              scale_column_losses=true,
+              calibrate_losses=false,
+              verbosity::Integer=1,
+              callback=nothing)
     
     #############################
     # Preparations
@@ -75,36 +78,35 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        _, variances = column_meanvar(D, row_batch_size)
-        variances = map(x->max(x,1e-4), variances)
-        weights = 1 ./ variances
+        col_errors = column_avg_loss(model.noise_model, D, row_batch_size)
+        weights = abs.(1 ./ col_errors)
+        weights = map(x -> max(x, 1e-5), weights)
+        weights[ (!isfinite).(weights) ] .= 1
         set_weight!(model.noise_model, weights)
     end
 
     # Prep the row and column transformations 
-    col_layers = make_viewable(model.col_transform)
     row_layers = make_viewable(model.row_transform)
+    col_layers = make_viewable(model.col_transform)
 
-    # Define the likelihood function
+    # Define the log-likelihood function
     likelihood = (X,Y,
                   r_layers,
                   c_layers,
-                  noise, D)-> inv_MN*invlinkloss(noise, 
-                                                  c_layers(
-                                                   r_layers(
-                                                    transpose(X)*Y
-                                                   )
-                                                  ),
-                                               D)
+                  noise, D)-> inv_MN*data_loss(X,Y,
+                                               r_layers,
+                                               c_layers,
+                                               noise, D; 
+                                               calibrate=calibrate_losses)
 
     # Prep the regularizers
     col_layer_regs = make_viewable(model.col_transform_reg)
     row_layer_regs = make_viewable(model.row_transform_reg)
    
-    col_layer_regularizer = (layers, reg) -> reg(layers)
-    row_layer_regularizer = (layers, reg) -> reg(layers)
-    X_regularizer = (X, reg) -> reg(X)
-    Y_regularizer = (Y, reg) -> reg(Y)
+    col_layer_regularizer = (layers, reg) -> model.lambda_col*reg(layers)
+    row_layer_regularizer = (layers, reg) -> model.lambda_row*reg(layers)
+    X_regularizer = (X, reg) -> model.lambda_X*reg(X)
+    Y_regularizer = (Y, reg) -> model.lambda_Y*reg(Y)
 
     # Initialize some objects to store gradients
     Y_grad = zero(model.Y)
@@ -117,6 +119,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # the default (an ADAGrad optimiser)
     if opt == nothing
         opt = Flux.Optimise.AdaGrad(lr)
+    end
+
+    # If no callback is provided, construct
+    # a do-nothing function
+    if callback == nothing
+        callback = (args...) -> nothing
     end
 
     # Track the loss
@@ -134,6 +142,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         vprint("Epoch ", epoch,":  ")
 
         loss = 0.0
+        data_loss = 0.0
 
         Y_grad .= 0
         col_layer_grads = fmap(tozero, col_layer_grads)
@@ -163,13 +172,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             binop!(.+, col_layer_grads, grads[2])
             binop!(.+, noise_model_grads, grads[3])
 
-            loss += batchloss
-
         end
 
         # Accumulate Y regularizer gradient
-        regloss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
-        loss += regloss
+        Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
         binop!(.+, Y_grad, Y_reg_grad[1])
        
         # Update Y and the Y regularizer
@@ -177,8 +183,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.Y_reg, Y_reg_grad[2])
 
         # Accumulate layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
-        loss += regloss
+        col_layer_reg_loss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
         binop!(.+, col_layer_grads, reg_grads[1])
         
         # Update layers and layer regularizers
@@ -210,13 +215,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             binop!(.+, X_grad, g[1])
             binop!(.+, row_layer_grads, g[2])
         
-            loss += batchloss
+            data_loss += batchloss
         end
 
         # Accumulate X regularizer gradients
-        regloss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
+        X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
 
-        loss += regloss
         binop!(.+, X_grad, X_reg_grads[1])
 
         # Update X and the X regularizer
@@ -224,13 +228,21 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         update!(opt, model.X_reg, X_reg_grads[2])
 
         # Accumulate the layer regularizer gradients
-        regloss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
-        loss += regloss
+        row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
         binop!(.+, row_layer_grads, reg_grads[1])
 
         # Update the layers and regularizers
         update!(opt, row_layers, row_layer_grads)
         update!(opt, row_layer_regs, reg_grads[2])
+
+        # Sum the loss components (halve the data loss
+        # to account for row-pass and col-pass)
+        loss = (data_loss + row_layer_reg_loss 
+                + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
+
+        # Execute the callback (may or may not mutate the model)
+        callback(model, epoch, data_loss, X_reg_loss, Y_reg_loss,
+                               row_layer_reg_loss, col_layer_reg_loss)
 
         # Report the loss
         elapsed = time()-t_start
@@ -240,15 +252,18 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         loss_diff = prev_loss - loss 
         if loss_diff < abs_tol
             tol_iters += 1
+            epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0)
-        elseif loss_diff/loss < abs_tol
+        elseif loss_diff/abs(loss) < abs_tol
             tol_iters += 1
+            epoch += 1
             vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
         else
-            prev_loss = loss
             tol_iters = 0
             epoch += 1
         end
+        prev_loss = loss
+
         if tol_iters >= tol_max_iters
             vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0)
             break
@@ -256,7 +271,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
     end
     if epoch >= max_epochs 
-        vprint("Terminated: reached max_epochs=",max_epochs, "\n"; level=0)
+        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=0)
     end
 
     #############################
