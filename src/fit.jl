@@ -11,7 +11,7 @@ export fit!
 """
     fit!(model::MatFacModel, D::AbstractMatrix;
          scale_columns=true, capacity=10^8, 
-         opt=ADAGrad(), lr=0.01, max_epochs=1000,
+         opt=AdaGrad(), lr=0.01, max_epochs=1000,
          abs_tol=1e-9, rel_tol=1e-6, 
          verbosity=1)
 
@@ -116,7 +116,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # If no optimiser is provided, initialize
     # the default (an ADAGrad optimiser)
     if opt == nothing
-        opt = Flux.Optimise.ADAGrad(lr)
+        opt = Flux.Optimise.AdaGrad(lr)
     end
 
     # Track the loss
