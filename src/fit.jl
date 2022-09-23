@@ -1,11 +1,8 @@
 
 
-import ScikitLearnBase: fit!
+import StatsBase: fit!
 
 AbstractOptimiser = Flux.Optimise.AbstractOptimiser
-
-export fit!
-
 
 
 """
