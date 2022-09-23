@@ -1,9 +1,138 @@
 
-using MatFac, Test, Flux, Zygote, CSV, DataFrames
+using MatFac, Test, Flux, Zygote, CSV, DataFrames, Functors, Statistics
 
 MF = MatFac
     
 logistic(x) = 1 / (1 + exp(-x))
+
+mutable struct TestStruct
+    a::Float64
+    b::NamedTuple
+    c::String
+end
+@functor TestStruct
+Flux.trainable(ts::TestStruct) = (a=ts.a, b=ts.b)
+
+function util_tests()
+
+    @testset "Utility functions" begin
+
+        opt = Flux.Optimise.AdaGrad()
+        opt_copy = deepcopy(opt)
+        params = (W=randn(10,20),
+                  child=(a=randn(10),
+                         b=randn(10))
+                  )
+        params_copy = deepcopy(params)
+        grads = (W=ones(10,20),
+                 child=(a=ones(10),
+                        b=nothing)
+                )
+
+        params_tuple = (randn(10,20), "cat", randn(10))
+        params_tuple_copy = deepcopy(params_tuple)
+        grads_tuple = (nothing, nothing, ones(10))
+
+       
+        ####################################### 
+        # Flux.update! extensions
+        Flux.update!(opt, params, nothing) 
+        @test all(params.W .== params_copy.W)
+        @test all(params.child.a .== params_copy.child.a)
+        @test all(params.child.b .== params_copy.child.b)
+        @test opt.eta == opt_copy.eta
+
+        Flux.update!(opt, params, grads)
+        @test isapprox(params.W, params_copy.W .- (opt.eta ./ (sqrt.(grads.W.*grads.W) .+ opt.epsilon) ) .* grads.W ) 
+        @test isapprox(params.child.b, params_copy.child.b)
+
+        Flux.update!(opt, params_tuple, grads_tuple)
+        @test isapprox(params_tuple[3], params_tuple_copy[3] .- (opt.eta ./ (sqrt.(grads_tuple[3].*grads_tuple[3]) .+ opt.epsilon) ) .* grads_tuple[3] )
+        @test params_tuple[2] == "cat"
+
+        #######################################
+        # Functors: fmap, fmapstructure extensions
+        test_struct = (A=randn(10), child=())
+        result = fmapstructure(x -> 2.0 .* x, test_struct)
+        @test isapprox(result.A, test_struct.A .* 2.0)
+        @test result.child == test_struct.child
+        result = fmap(x -> 2.0 .* x, test_struct)
+        @test isapprox(result.A, test_struct.A .* 2.0)
+        @test result.child == test_struct.child
+
+        #######################################
+        # binop!
+        params = deepcopy(params_copy)
+        MF.binop!(.+, params, grads)
+        @test isapprox(params.W, params_copy.W .+ grads.W)
+        @test isapprox(params.child.a, params_copy.child.a .+ grads.child.a)
+        @test isapprox(params.child.b, params_copy.child.b)
+
+        #######################################
+        # rec_trainable
+        ts = TestStruct(3.14, (W=randn(10,20), name="dog"), "fish")
+
+        trn_params = MF.rec_trainable(ts)
+        @test trn_params.a == ts.a
+        @test trn_params.b.W == ts.b.W
+        @test trn_params.b.name == ()
+
+        ##################################
+        # tozero
+        result = fmapstructure(MF.tozero, params)
+        @test isapprox(result.W, zero(result.W))
+        @test isapprox(result.child.a, zero(result.child.a))
+        @test isapprox(result.child.b, zero(result.child.b))
+
+        ##########################################
+        # replace_if, tozero!, tonan!, toone!
+        test_array = rand([0,NaN], 10, 20)
+        test_array_copy = copy(test_array)
+        nan_idx = isnan.(test_array)
+        MF.tozero!(test_array, nan_idx)
+        @test isapprox(test_array, zero(test_array)) 
+        MF.tonan!(test_array, nan_idx)
+        @test all(map((a,b) -> isequal(a,b), test_array, test_array_copy))
+        MF.toone!(test_array, nan_idx)
+        @test sum(test_array) == sum(nan_idx)
+        MF.tonan!(test_array, nan_idx)
+
+        #########################################
+        # batched_reduce
+        s = MF.batched_reduce((s, D) -> s + sum(isnan.(D)), test_array; capacity=20)
+        @test s == sum(isnan.(test_array))
+
+        col_counts = MF.batched_reduce((r, D) -> r .+ sum(isnan.(D), dims=1), test_array; capacity=20)
+        @test isapprox(col_counts, sum(isnan.(test_array), dims=1))
+
+        ########################################## 
+        # column_nonnan
+        @test isapprox(MF.column_nonnan(test_array), vec(sum((!isnan).(test_array), dims=1)))
+
+        #########################################
+        # batched_column_meanvar
+        A = randn(10,20)
+        batched_means, batched_vars = MF.batched_column_meanvar(A; capacity=20)
+        @test isapprox(batched_means, vec(mean(A; dims=1)))
+        @test isapprox(batched_vars, vec(var(A; dims=1, corrected=false)))
+
+        #########################################
+        # batched_column_mean_loss
+        noise_model = MF.NormalNoise(20)
+        col_losses = MF.batched_column_mean_loss(noise_model, A)
+        @test isapprox(col_losses, vec(0.5 .* var(A; dims=1, corrected=false)))
+
+        #########################################
+        # batched_data_loss
+        matfac = MF.MatFacModel(10, 20, 1, "normal")
+        matfac.X .= 0
+        matfac.Y .= 0
+        total_loss = MF.batched_data_loss(matfac, A; capacity=20)
+        @test isapprox(total_loss, 0.5*sum(A .* A))
+
+    end
+
+end
 
 
 function noise_model_tests()
@@ -329,7 +458,8 @@ end
 
 
 function main()
-    
+   
+    util_tests() 
     noise_model_tests()
     model_tests()
     update_tests()

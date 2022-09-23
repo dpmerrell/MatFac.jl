@@ -107,7 +107,7 @@ Identical to the other constructor, but applies the same
 function MatFacModel(M::Integer, N::Integer, K::Integer,
                      loss::String; kwargs...)
     losses = fill(loss, N)
-    return MatFacModel(M, N, K, losses; kwargs)
+    return MatFacModel(M, N, K, losses; kwargs...)
 end
 
 
