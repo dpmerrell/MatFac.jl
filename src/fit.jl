@@ -78,7 +78,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        col_errors = column_avg_loss(model.noise_model, D, row_batch_size)
+        col_errors = batch_column_mean_loss(model.noise_model, D, row_batch_size)
         weights = abs.(1 ./ col_errors)
         weights = map(x -> max(x, 1e-5), weights)
         weights[ (!isfinite).(weights) ] .= 1

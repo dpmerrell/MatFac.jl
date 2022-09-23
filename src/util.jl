@@ -107,12 +107,38 @@ function toone!(A::AbstractArray{T,K}, idx::AbstractArray{Bool,K}) where T where
     map!((a, b) -> replace_if(a, T(1), b), A, A, idx) 
 end
 
+###################################################
+# "Batched" operations for large arrays
+###################################################
+
+
+function batch_reduce(r, D_list...; capacity=Int(25e6), start=0.0)
+
+    M, N = size(D)
+    row_batch_size = div(capacity, N)
+    result = start 
+ 
+    for row_batch in BatchIter(M, row_batch_size)
+        view_list = [view(D, row_batch, :) for D in D_list]
+        result = r(result, view_list...)
+    end
+
+    return result
+end 
+
 
 ###################################################
 # Compute means and variances of data columns
 ###################################################
 
-function column_means(D::AbstractMatrix, row_batch_size::Number)
+function column_nonzeros(D::AbstractMatrix)
+    nonnan_idx = (!isnan).(nan_idx)
+    M_vec = vec(sum(nonnan_idx, dims=1))
+    return M_vec
+end
+
+
+function column_means(D::AbstractMatrix)
 
     nan_idx = isnan.(D)
     tozero!(D, nan_idx)
@@ -129,32 +155,28 @@ function column_means(D::AbstractMatrix, row_batch_size::Number)
 end
 
 
-function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
+function column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
 
+    M, N = size(D)
+    
+    # Replace NaNs with zeros
     nan_idx = isnan.(D)
-    tozero!(D, nan_idx)
     nonnan_idx = (!).(nan_idx)
+    tozero!(D, nan_idx)
     M_vec = vec(sum(nonnan_idx, dims=1))
 
     # Compute column means
     sum_vec = vec(sum(D, dims=1))
     mean_vec = sum_vec ./ M_vec
-    mean_nan_idx = isnan.(mean_vec)
-    tozero!(mean_vec, mean_nan_idx)
 
-    # Compute column variances
-    M, N = size(D)
-    sumsq_vec = similar(D, N)
-    sumsq_vec .= 0
-    for row_batch in BatchIter(M, row_batch_size)
-        diff = view(D, row_batch, :) .- transpose(mean_vec)
-        batch_nonnan_idx = view(nonnan_idx, row_batch, :)
-        diff .*= batch_nonnan_idx
-        diff .*= diff
-        sumsq_vec .+= vec(sum(diff, dims=1))
-    end
-    var_vec = sumsq_vec ./ (M_vec .+ 1) # Unbiased estimate
-    
+    # Compute column variances via 
+    # V[x] = E[x^2] - E[x]^2 
+    sumsq_vec = vec(batch_reduce((D1, D2) -> sum(D1 .+ D2.*D2; dims=1), D;
+                                 start=zeros(1,N))
+                   )
+    meansq_vec = sumsq_vec ./ M_vec
+    var_vec = meansq_vec - (mean_vec.*mean_vec)
+
     # Restore NaN values
     tonan!(D, nan_idx)
 
@@ -162,27 +184,33 @@ function column_meanvar(D::AbstractMatrix, row_batch_size::Number)
 end
 
 
-function column_avg_loss(noise_model, D::AbstractMatrix, row_batch_size::Number)
+function column_total_loss(noise_model, D, mean_vec)
+    col_mean = repeat(transpose(mean_vec), size(D,1), 1)
+    ls = loss(noise_model, col_mean, D; calibrate=true)
+    nan_idx = isnan.(ls)
+    tozero!(ls, nan_idx)
+    return vec(sum(ls, dims=1))
+end
+
+
+function batch_column_mean_loss(noise_model, D::AbstractMatrix, row_batch_size::Number)
 
     M, N = size(D)
-    col_mean_vec = column_means(D, row_batch_size)
-
-    col_errors = zeros(N)
-    col_nnz = zeros(N)
-    for row_batch in BatchIter(M, row_batch_size)
-        batch_D = view(D, row_batch, :)
-        batch_col_mean = repeat(transpose(col_mean_vec), row_batch.stop - row_batch.start + 1, 1) 
-        batch_error = loss(noise_model, batch_col_mean, batch_D; calibrate=true)
-
-        batch_nan = isnan.(batch_D)
-        tozero!(batch_error, batch_nan)
-
-        col_errors += reshape(sum(batch_error, dims=1),:)
-        col_nnz += reshape(sum( (!).(batch_nan), dims=1),:)
-    end
-    col_errors ./= col_nnz
+    col_mean_vec = column_means(D)
+    
+    col_errors = batch_reduce((v, D) -> v .+ column_total_loss(D), D; start=zeros(N))
+    
+    M_vec = column_nonzeros(D) 
+    col_errors ./= M_vec
 
     return col_errors
 end
 
+
+function compute_data_loss(model, D::AbstractMatrix, capacity=Int(25e6))
+
+    M, N = size(D)
+    total_loss = batch_reduce((ls, model, D) -> ls + data_loss(model, D), model, D; start=0)
+    return total_loss
+end
 

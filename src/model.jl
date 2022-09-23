@@ -122,6 +122,11 @@ function forward(X, Y, row_trans, col_trans, noise_model)
 end
 
 
+function (bm::MatFacModel)()
+    return forward(bm.X, bm.Y, bm.row_transform, bm.col_transform, bm.noise_model) 
+end
+
+
 function data_loss(X, Y, row_trans, col_trans, noise_model, D; kwargs...)
     return invlinkloss(noise_model, 
                col_trans(
@@ -134,9 +139,13 @@ function data_loss(X, Y, row_trans, col_trans, noise_model, D; kwargs...)
 end
 
 
-function (bm::MatFacModel)()
-    return forward(bm.X, bm.Y, bm.row_transform, bm.col_transform, bm.noise_model) 
+function data_loss(bm::MatFacModel, D; kwargs...)
+    return data_loss(bm.X, bm.Y, 
+                     bm.row_transform, bm.col_transform, 
+                     bm.noise_model, D; kwargs...)
 end
+
+
 
 
 function view(bm::MatFacModel, idx1, idx2)
