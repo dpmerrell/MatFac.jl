@@ -1,5 +1,5 @@
 
-using MatFac, Test, Flux, Zygote, CSV, DataFrames, Functors, Statistics
+using MatFac, Test, Flux, Zygote, CSV, DataFrames, Functors, Statistics, StatsBase
 
 MF = MatFac
     
