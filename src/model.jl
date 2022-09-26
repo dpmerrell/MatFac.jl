@@ -1,5 +1,5 @@
 
-import Base: view
+import Base: view, deepcopy
 
 export MatFacModel, save_model, load_model
 
