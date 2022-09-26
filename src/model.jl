@@ -191,7 +191,7 @@ end
 ################################################
 # Deepcopy operation
 function Base.deepcopy(a::T) where T <: EqTypes
-    field_values = [getfield(a, fn) for fn in fieldnames(T)]
+    field_values = [deepcopy(getfield(a, fn)) for fn in fieldnames(T)]
     return T(field_values...)
 end
 
