@@ -42,6 +42,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               scale_column_losses=true,
               calibrate_losses=false,
               verbosity::Integer=1,
+              print_iter::Integer=10,
               callback=nothing)
     
     #############################
@@ -161,10 +162,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                                           noise, D_v)
 
             # Accumulate the gradient
-            batchloss, grads = Zygote.withgradient(col_likelihood, 
-                                                   model.Y,
-                                                   col_layers_view,
-                                                   model.noise_model)
+            grads = Zygote.gradient(col_likelihood, 
+                                    model.Y,
+                                    col_layers_view,
+                                    model.noise_model)
 
             binop!(.+, Y_grad, grads[1])
             binop!(.+, col_layer_grads, grads[2])
@@ -243,8 +244,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                row_layer_reg_loss, col_layer_reg_loss)
 
         # Report the loss
-        elapsed = time()-t_start
-        vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n")
+        if (epoch % print_iter) == 0
+            elapsed = time() - t_start
+            vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n")
+        end
 
         # Check termination conditions
         loss_diff = prev_loss - loss 
