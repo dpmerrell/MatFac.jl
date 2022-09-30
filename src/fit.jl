@@ -138,7 +138,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     tol_iters = 0
     while epoch <= max_epochs
 
-        vprint("Epoch ", epoch,":  ")
+        if (epoch % print_iter) == 0
+            vprint("Epoch ", epoch,":  ")
+        end
 
         loss = 0.0
         data_loss = 0.0
