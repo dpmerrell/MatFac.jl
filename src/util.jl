@@ -174,9 +174,11 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
     mean_vec = sum_vec ./ M_vec
 
     # Compute column variances via 
-    # V[x] = E[x^2] - E[x]^2 
+    # V[x] = E[x^2] - E[x]^2
+    reduce_start = similar(D, 1, N)
+    reduce_start .= 0
     sumsq_vec = vec(batched_reduce((D1, D2) -> sum(D1 .+ D2.*D2; dims=1), D;
-                                 start=zeros(1,N), capacity=capacity)
+                                 start=reduce_start, capacity=capacity)
                    )
     meansq_vec = sumsq_vec ./ M_vec
     var_vec = meansq_vec - (mean_vec.*mean_vec)
@@ -201,9 +203,11 @@ function batched_column_mean_loss(noise_model, D::AbstractMatrix; capacity=Int(2
 
     M, N = size(D)
     col_mean_vec = column_means(D)
-    
+   
+    reduce_start = similar(D, N)
+    reduce_start .= 0
     col_errors = batched_reduce((v, D) -> v .+ column_total_loss(noise_model, D, col_mean_vec), D; 
-                                capacity=capacity, start=zeros(N))
+                                capacity=capacity, start=reduce_start)
     
     M_vec = column_nonnan(D) 
     col_errors ./= M_vec
@@ -216,7 +220,7 @@ function batched_data_loss(model, D::AbstractMatrix; capacity=Int(25e6))
 
     M, N = size(D)
     total_loss = batched_reduce((ls, model, D) -> ls + data_loss(model, D), 
-                                model, D; start=0, capacity=capacity)
+                                model, D; start=0.0, capacity=capacity)
     return total_loss
 end
 

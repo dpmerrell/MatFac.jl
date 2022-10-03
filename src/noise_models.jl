@@ -76,7 +76,9 @@ function BernoulliNoise(N::Integer)
 end
 
 # inverse link function
-sigmoid_kernel(x) = 1 / (1 + exp(-x))
+function sigmoid_kernel(x::T) where T <: Number
+    return T(1 / (1 + exp(-x)))
+end
 
 function sigmoid(X)
     return map(sigmoid_kernel, X)
@@ -306,33 +308,34 @@ function invlink(on::OrdinalNoise, A)
     return A
 end
 
-function ordinal_loss_kernel(z::T, d::Number, thresholds::AbstractVector{<:Number}) where T <: Number
-    d_idx = round(UInt8,d)
-    l_thresh = thresholds[d_idx]
-    r_thresh = thresholds[d_idx .+ UInt8(1)]
+function ordinal_loss_kernel(z::T, l_t::T, r_t::T) where T <: Number
     eps_t = T(1e-15)
-    return -log(sigmoid_kernel(r_thresh - z) - sigmoid_kernel(l_thresh - z) + eps_t)
+    return T(-log(sigmoid_kernel(r_t - z) - sigmoid_kernel(l_t - z) + eps_t))
 end
 
-function ordinal_calibration_kernel(d::T, thresholds::AbstractVector{<:Number}) where T <: Number
-    d_idx = round(UInt8,d)
-    th_max = thresholds[end-1] + 1e3
-    th_min = thresholds[2] - 1e3
-    l_thresh = thresholds[d_idx]
-    r_thresh = thresholds[d_idx + UInt8(1)]
-    r_thresh = isfinite(r_thresh) ? r_thresh : th_max
-    l_thresh = isfinite(l_thresh) ? l_thresh : th_min
-    z = (r_thresh + l_thresh)*0.5
-    eps_t = T(1e-15)
-    return T(-log(sigmoid_kernel(r_thresh - z) - sigmoid_kernel(l_thresh - z) + eps_t))
+function ordinal_calibration(l_thresh::AbstractMatrix{T}, 
+                             r_thresh::AbstractMatrix{T}, 
+                             thresholds::AbstractVector{T}) where T <: Number
+    thresholds_cpu = cpu(thresholds)
+    th_max = T(thresholds_cpu[end-1] + 1e-3)
+    th_min = T(thresholds_cpu[1] - 1e3)
+    map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
+    map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
+    centers = (r_thresh .+ l_thresh).*T(0.5)
+    return map(ordinal_loss_kernel, centers, l_thresh, r_thresh)
 end
 
 
-function loss(on::OrdinalNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
+function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibrate=false) where T <: Number
 
-    l = map((z,d) -> ordinal_loss_kernel(z, d, on.ext_thresholds), Z, D)
+    D_idx = round.(UInt8, D)
+    ext_thresholds = T.(on.ext_thresholds)
+    l_thresh = ext_thresholds[D_idx]
+    r_thresh = ext_thresholds[D_idx .+ UInt8(1)]
+
+    l = map(ordinal_loss_kernel, Z, l_thresh, r_thresh)
     if calibrate
-        l .-= map(d -> ordinal_calibration_kernel(d, on.ext_thresholds), D) 
+        l .-= ordinal_calibration(l_thresh, r_thresh, ext_thresholds)
     end
     l .*= transpose(on.weight)
 
@@ -347,15 +350,16 @@ end
 
 nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
-function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=false)
+function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatrix{T}, D; calibrate=false) where T <: Number
 
     nanvals = isnan.(D)
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
 
     sort!(on.ext_thresholds)
-    l_thresh = on.ext_thresholds[D_idx]
-    r_thresh = on.ext_thresholds[R_idx]
+    ext_thresholds = T.(on.ext_thresholds) 
+    l_thresh = ext_thresholds[D_idx]
+    r_thresh = ext_thresholds[R_idx]
 
     sig_r = sigmoid(r_thresh .- Z)
     sig_l = sigmoid(l_thresh .- Z)
@@ -374,7 +378,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=
         on_l_bar = loss_bar .* sig_l .* (1 .- sig_l) ./ sig_diff
         on_l_bar .*= transpose(on.weight)
 
-        N_bins = length(on.ext_thresholds)-1
+        N_bins = length(ext_thresholds)-1
         on_bar = zeros(N_bins + 1)
         relevant_idx = similar(on_r_bar, Bool)
         for i=1:N_bins
@@ -384,9 +388,9 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=
         end
         relevant_idx = nothing
 
-        T = typeof(on.ext_thresholds) # Move to GPU if necessary
+        U = typeof(on.ext_thresholds) # Move to GPU if necessary
 
-        on_bar = Tangent{OrdinalNoise}(ext_thresholds=T(on_bar))
+        on_bar = Tangent{OrdinalNoise}(ext_thresholds=U(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
         Z_bar .*= transpose(on.weight)
 
@@ -398,7 +402,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z, D; calibrate=
     
     l = -log.(sig_diff .+ 1e-15)
     if calibrate
-        l .-= map(d -> ordinal_calibration_kernel(d, on.ext_thresholds), D)
+        l .-= ordinal_calibration(l_thresh, r_thresh, ext_thresholds)
     end
     l .*= transpose(on.weight)
 
