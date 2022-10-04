@@ -28,7 +28,8 @@ function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix; kwargs...)
     diff = (Z .- D)
     diff .*= diff
     diff .*= 0.5
-    return diff .* transpose(nn.weight)
+    diff .*= transpose(nn.weight)
+    return diff
 end
 
 
@@ -168,7 +169,6 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; k
     
     A .= loss(bn, A, D; kwargs...)
     tozero!(A, nanvals)
-
     return sum(A), invlinkloss_bernoulli_pullback
 end
 
@@ -318,7 +318,7 @@ function ordinal_calibration(l_thresh::AbstractMatrix{T},
                              thresholds::AbstractVector{T}) where T <: Number
     thresholds_cpu = cpu(thresholds)
     th_max = T(thresholds_cpu[end-1] + 1e-3)
-    th_min = T(thresholds_cpu[1] - 1e3)
+    th_min = T(thresholds_cpu[2] - 1e3)
     map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
     map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
     centers = (r_thresh .+ l_thresh).*T(0.5)
@@ -405,7 +405,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
         l .-= ordinal_calibration(l_thresh, r_thresh, ext_thresholds)
     end
     l .*= transpose(on.weight)
-
+    
     return l, loss_ordinal_pullback
 end
 
