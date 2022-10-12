@@ -317,7 +317,7 @@ function ordinal_calibration(l_thresh::AbstractMatrix{T},
                              r_thresh::AbstractMatrix{T}, 
                              thresholds::AbstractVector{T}) where T <: Number
     thresholds_cpu = cpu(thresholds)
-    th_max = T(thresholds_cpu[end-1] + 1e-3)
+    th_max = T(thresholds_cpu[end-1] + 1e3)
     th_min = T(thresholds_cpu[2] - 1e3)
     map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
     map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
