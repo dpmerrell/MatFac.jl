@@ -154,6 +154,7 @@ function column_means(D::AbstractMatrix)
     mean_vec = sum_vec ./ M_vec
     mean_nan_idx = isnan.(mean_vec)
     tozero!(mean_vec, mean_nan_idx)
+    tonan!(D, nan_idx)
 
     return mean_vec
 end

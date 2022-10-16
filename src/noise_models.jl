@@ -313,6 +313,8 @@ function ordinal_loss_kernel(z::T, l_t::T, r_t::T) where T <: Number
     return T(-log(sigmoid_kernel(r_t - z) - sigmoid_kernel(l_t - z) + eps_t))
 end
 
+nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
+
 function ordinal_calibration(l_thresh::AbstractMatrix{T}, 
                              r_thresh::AbstractMatrix{T}, 
                              thresholds::AbstractVector{T}) where T <: Number
@@ -328,7 +330,8 @@ end
 
 function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibrate=false) where T <: Number
 
-    D_idx = round.(UInt8, D)
+    nanvals = isnan.(D)
+    D_idx = nanround.(D)
     ext_thresholds = T.(on.ext_thresholds)
     l_thresh = ext_thresholds[D_idx]
     r_thresh = ext_thresholds[D_idx .+ UInt8(1)]
@@ -337,6 +340,7 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibra
     if calibrate
         l .-= ordinal_calibration(l_thresh, r_thresh, ext_thresholds)
     end
+    l[nanvals] .= 0
     l .*= transpose(on.weight)
 
     return l
@@ -348,7 +352,6 @@ function summary_str(A::AbstractArray, name::String)
 end
 
 
-nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
 function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatrix{T}, D; calibrate=false) where T <: Number
 
