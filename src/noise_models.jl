@@ -17,8 +17,12 @@ function NormalNoise(N::Integer)
     return NormalNoise(ones(N))
 end
 
-# inverse link
+# link
+function link(::NormalNoise, A::AbstractMatrix)
+    return A
+end
 
+# inverse link
 function invlink(::NormalNoise, A::AbstractMatrix)
     return A
 end
@@ -74,6 +78,19 @@ Flux.trainable(bn::BernoulliNoise) = ()
 
 function BernoulliNoise(N::Integer)
     return BernoulliNoise(ones(N))
+end
+
+# link function
+function logit_kernel(x::T) where T <: Number
+    return T(log( x/(1-x) ))
+end
+
+function logit(X)
+    return map(logit_kernel, X)
+end
+
+function link(::NormalNoise, A::AbstractMatrix)
+    return A
 end
 
 # inverse link function
@@ -193,13 +210,17 @@ function PoissonNoise(N::Integer)
     return PoissonNoise(ones(N))
 end
 
+# link function
+
+function link(pn::PoissonNoise, A::AbstractMatrix)
+    return log.(A)
+end
+
 # inverse link function
 
 function invlink(pn::PoissonNoise, A::AbstractMatrix)
     return exp.(A)
 end
-
-
 
 # Loss function
 function poisson_loss_kernel(z::T, d::Number) where T <: Number
@@ -304,6 +325,29 @@ function OrdinalNoise(N::Integer, n_values::Integer)
     return OrdinalNoise(ones(N), n_values)
 end
 
+nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
+
+# link function
+
+function link(on::OrdinalNoise, D)
+    thresholds_cpu = cpu(on.thresholds)
+    D_idx = nanround.(D)
+    R_idx = D_idx .+ UInt8(1) 
+
+    sort!(on.ext_thresholds)
+    l_thresh = on.ext_thresholds[D_idx]
+    r_thresh = on.ext_thresholds[R_idx]
+
+    th_max = T(thresholds_cpu[end-1] + 1)
+    th_min = T(thresholds_cpu[2] - 1)
+    map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
+    map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
+    centers = (r_thresh .+ l_thresh).*T(0.5)
+    return centers
+end
+
+# inverse link function 
+
 function invlink(on::OrdinalNoise, A)
     return A
 end
@@ -313,7 +357,6 @@ function ordinal_loss_kernel(z::T, l_t::T, r_t::T) where T <: Number
     return T(-log(sigmoid_kernel(r_t - z) - sigmoid_kernel(l_t - z) + eps_t))
 end
 
-nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
 
 function ordinal_calibration(l_thresh::AbstractMatrix{T}, 
                              r_thresh::AbstractMatrix{T}, 
@@ -475,7 +518,7 @@ function view(cn::CompositeNoise, idx::Colon)
     return view(cn, idx)
 end
 
-
+link(cn::CompositeNoise, D) = hcat(map((n,rng) -> link(n, view(D,:,rng)), cn.noises, cn.col_ranges)...)
 invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
 loss(cn::CompositeNoise, Z, D; kwargs...) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 invlinkloss(cn::CompositeNoise, A, D; kwargs...) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges))
