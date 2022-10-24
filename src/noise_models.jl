@@ -39,8 +39,8 @@ end
 
 function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D; kwargs...)
 
-    nanvals = isnan.(D)
     diff = (Z .- D)
+    nanvals = isnan.(diff)
     tozero!(diff, nanvals)
     loss = diff.*diff
     loss .*= 0.5
@@ -53,7 +53,6 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D; kwargs...)
                Z_bar, 
                ChainRulesCore.NoTangent()
     end
-
 
     return loss, loss_normal_pullback
 end
@@ -170,17 +169,19 @@ invlinkloss(bn::BernoulliNoise, Z, D; kwargs...) = sum(loss(bn, invlink(bn, Z), 
 
 function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; kwargs...)
 
-    nanvals = isnan.(D) # Handle missing values
     A = sigmoid(Z)
     diff = A .- D
+    nanvals = isnan.(diff) # Handle missing values
     diff .*= transpose(bn.weight)
-    tozero!(diff, nanvals)
 
     function invlinkloss_bernoulli_pullback(loss_bar)
 
+        Z_bar = loss_bar .* diff
+        tozero!(Z_bar, nanvals)
+
         return ChainRulesCore.NoTangent(),
                ChainRulesCore.NoTangent(), 
-               loss_bar .* diff,
+               Z_bar,
                ChainRulesCore.NoTangent()
     end
     
@@ -398,7 +399,6 @@ end
 
 function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatrix{T}, D; calibrate=false) where T <: Number
 
-    nanvals = isnan.(D)
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
 
@@ -408,13 +408,15 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
     r_thresh = ext_thresholds[R_idx]
 
     sig_r = sigmoid(r_thresh .- Z)
+    nanvals = (!isfinite).(sig_r)
+    toone!(sig_r, nanvals)
+
     sig_l = sigmoid(l_thresh .- Z)
-    toone!(sig_r, nanvals)  # These settings ensure that the missing
-    tozero!(sig_l, nanvals) # data don't contribute to loss or gradients
-
+    nanvals = (!isfinite).(sig_l)
+    tozero!(sig_l, nanvals)
+    
     sig_diff = sig_r .- sig_l
-
-    nanvals .= (sig_diff .== 0)
+    nanvals = (!isfinite).(sig_diff)
     toone!(sig_diff, nanvals) 
 
     function loss_ordinal_pullback(loss_bar)
@@ -439,7 +441,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
         on_bar = Tangent{OrdinalNoise}(ext_thresholds=U(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
         Z_bar .*= transpose(on.weight)
-
+  
         return ChainRulesCore.NoTangent(), 
                on_bar, 
                Z_bar, 
