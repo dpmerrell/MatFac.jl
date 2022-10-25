@@ -467,10 +467,10 @@ end
 
 function main()
    
-    #util_tests() 
-    #noise_model_tests()
-    #model_tests()
-    #update_tests()
+    util_tests() 
+    noise_model_tests()
+    model_tests()
+    update_tests()
     fit_tests()
     callback_tests()
     io_tests()
