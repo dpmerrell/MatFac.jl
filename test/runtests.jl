@@ -342,6 +342,9 @@ function fit_tests()
         composite_data[:,21:30] .= 1
         composite_data[:,31:40] .= 3
 
+        to_null = rand(Bool, M, N)
+        composite_data[to_null] .= NaN
+
         #################################
         # CPU TESTS
         model = MF.MatFacModel(M,N,K, col_losses)
@@ -358,7 +361,12 @@ function fit_tests()
         @test !isapprox(model.X, X_start)
         @test !isapprox(model.Y, Y_start)
         @test !isapprox(model.noise_model.noises[4].ext_thresholds, thresholds_start)
-
+        
+        # test whether the parameters contain NaN
+        @test all(isfinite.(model.X))
+        @test all(isfinite.(model.Y))
+        @test all(isfinite.(model.noise_model.noises[4].ext_thresholds[2:4]))
+ 
         #################################
         # GPU TESTS
         model = MF.MatFacModel(M,N,K, col_losses)
@@ -459,10 +467,10 @@ end
 
 function main()
    
-    util_tests() 
-    noise_model_tests()
-    model_tests()
-    update_tests()
+    #util_tests() 
+    #noise_model_tests()
+    #model_tests()
+    #update_tests()
     fit_tests()
     callback_tests()
     io_tests()
