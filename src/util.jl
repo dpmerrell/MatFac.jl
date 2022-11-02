@@ -178,11 +178,11 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
     # V[x] = E[x^2] - E[x]^2
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    sumsq_vec = vec(batched_reduce((D1, D2) -> sum(D1 .+ D2.*D2; dims=1), D;
+    sumsq_vec = vec(batched_reduce((D1, D2) -> D1 .+ sum(D2.*D2; dims=1), D;
                                  start=reduce_start, capacity=capacity)
                    )
     meansq_vec = sumsq_vec ./ M_vec
-    var_vec = meansq_vec - (mean_vec.*mean_vec)
+    var_vec = meansq_vec .- (mean_vec.*mean_vec)
 
     # Restore NaN values
     tonan!(D, nan_idx)
@@ -212,7 +212,6 @@ function batched_column_mean_loss(noise_model, D::AbstractMatrix; capacity=Int(2
     
     M_vec = column_nonnan(D) 
     col_errors ./= M_vec
-
     return col_errors
 end
 
@@ -220,9 +219,9 @@ end
 function batched_data_loss(model, D::AbstractMatrix; capacity=Int(25e6))
 
     M, N = size(D)
-    total_loss = batched_reduce((ls, model, D) -> ls + data_loss(model, D), 
+    total_loss = batched_reduce((ls, model, D) -> ls + data_loss(model, D; calibrate=true), 
                                 model, D; start=0.0, capacity=capacity)
-    return total_loss
+    return total_loss 
 end
 
 

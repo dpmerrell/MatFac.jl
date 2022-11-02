@@ -344,6 +344,7 @@ function fit_tests()
 
         to_null = rand(Bool, M, N)
         composite_data[to_null] .= NaN
+        composite_data[9,:] .= NaN
 
         #################################
         # CPU TESTS

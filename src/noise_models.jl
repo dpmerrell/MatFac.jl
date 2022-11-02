@@ -36,15 +36,16 @@ function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix; kwargs...)
     return diff
 end
 
+mean(l) = sum(l) / prod(size(l))
 
 function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D; kwargs...)
 
     diff = (Z .- D)
-    nanvals = isnan.(diff)
+    nanvals = (!isfinite).(diff)
     tozero!(diff, nanvals)
-    loss = diff.*diff
-    loss .*= 0.5
-    loss .*= transpose(nn.weight)
+    l = diff.*diff
+    l .*= 0.5
+    l .*= transpose(nn.weight)
 
     function loss_normal_pullback(loss_bar)
         Z_bar = loss_bar .* diff .* transpose(nn.weight)
@@ -54,7 +55,7 @@ function ChainRulesCore.rrule(::typeof(loss), nn::NormalNoise, Z, D; kwargs...)
                ChainRulesCore.NoTangent()
     end
 
-    return loss, loss_normal_pullback
+    return l, loss_normal_pullback
 end
 
 invlinkloss(nn::NormalNoise, Z, D; kwargs...) = sum(loss(nn::NormalNoise, Z, D; kwargs...))
@@ -88,8 +89,8 @@ function logit(X)
     return map(logit_kernel, X)
 end
 
-function link(::NormalNoise, A::AbstractMatrix)
-    return A
+function link(::BernoulliNoise, A::AbstractMatrix)
+    return logit(A)
 end
 
 # inverse link function
@@ -146,7 +147,7 @@ end
 function ChainRulesCore.rrule(::typeof(loss), bn::BernoulliNoise, Z, D; kwargs...)
     
     result = loss(bn,Z,D; kwargs...)
-    nanvals = isnan.(result)
+    nanvals = (!isfinite).(result)
     tozero!(result, nanvals)
         
     Z_bar = (-D./Z - (1 .- D) ./ (1 .- Z))
@@ -171,7 +172,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; k
 
     A = sigmoid(Z)
     diff = A .- D
-    nanvals = isnan.(diff) # Handle missing values
+    nanvals = (!isfinite).(diff) # Handle missing values
     diff .*= transpose(bn.weight)
 
     function invlinkloss_bernoulli_pullback(loss_bar)
@@ -187,6 +188,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; k
     
     A .= loss(bn, A, D; kwargs...)
     tozero!(A, nanvals)
+
     return sum(A), invlinkloss_bernoulli_pullback
 end
 
@@ -245,7 +247,7 @@ end
 function ChainRulesCore.rrule(::typeof(loss), pn::PoissonNoise, Z, D; kwargs...)
     
     result = loss(pn, Z, D; kwargs...)
-    nanvals = isnan.(D)
+    nanvals = (!isfinite).(D)
     tozero!(result, nanvals)
         
     Z_bar = (1 .- D ./ Z)
@@ -268,7 +270,7 @@ invlinkloss(pn::PoissonNoise, Z, D; kwargs...) = sum(loss(pn, invlink(pn, Z), D;
 
 function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D; kwargs...)
 
-    nanvals = isnan.(D)
+    nanvals = (!isfinite).(D)
     A = invlink(pn, Z)
         
     diff = A .- D
@@ -326,7 +328,7 @@ function OrdinalNoise(N::Integer, n_values::Integer)
     return OrdinalNoise(ones(N), n_values)
 end
 
-nanround(x) = isnan(x) ? UInt8(1) : round(UInt8, x)
+nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
 
 # link function
 
@@ -374,7 +376,7 @@ end
 
 function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibrate=false) where T <: Number
 
-    nanvals = isnan.(D)
+    nanvals = (!isfinite).(D)
     D_idx = nanround.(D)
     ext_thresholds = T.(on.ext_thresholds)
     l_thresh = ext_thresholds[D_idx]
