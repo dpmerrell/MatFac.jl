@@ -10,29 +10,25 @@ end
 
 function iterate(bi::BatchIter)
 
-    l_idx = 1
-    r_idx = min(bi.N, l_idx + bi.batch_size - 1)
-
-    if r_idx < l_idx
-        return nothing
-    end
-
-    return l_idx:r_idx, r_idx
+    l_indices = collect(1:bi.batch_size:bi.N)
+    r_indices = vcat(l_indices[2:end] .- 1, bi.N)
+    ranges = [l:r for (l, r) in zip(l_indices, r_indices)]
+    shuffle!(ranges)
+    
+    rng = popfirst!(ranges)
+    
+    return rng, ranges
 end
 
 
-function iterate(bi::BatchIter, prev_r_idx)
+function iterate(bi::BatchIter, rem_ranges)
 
-    l_idx = prev_r_idx + 1
-    
-    r_idx = min(bi.N, l_idx + bi.batch_size - 1)
-
-    if r_idx < l_idx
+    if length(rem_ranges) == 0
         return nothing
     end
-
-    return l_idx:r_idx, r_idx
-
+    rng = popfirst!(rem_ranges)
+    
+    return rng, rem_ranges
 end
 
 
