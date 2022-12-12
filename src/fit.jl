@@ -10,7 +10,10 @@ AbstractOptimiser = Flux.Optimise.AbstractOptimiser
          scale_columns=true, capacity=10^8, 
          opt=AdaGrad(), lr=0.01, max_epochs=1000,
          abs_tol=1e-9, rel_tol=1e-6, 
-         verbosity=1)
+         verbosity=1, print_iter=10,
+         callback=nothing,
+         update_factors=true,
+         update_layers=true)
 
 Fit a MatFacModel to dataset D. 
 
@@ -26,6 +29,10 @@ Fit a MatFacModel to dataset D.
 * `max_epochs`: an upper bound on the number of epochs.
 * `verbosity`: larger values make the method print more 
   information to stdout.
+* `print_iter`: the number of iterations between printouts to stdout
+* `callback`: a function (or callable struct) called at the end of each iteration
+* `update_factors`: whether to update the factors (i.e., setting to false holds X,Y fixed)
+* `update_layers`: whether to update the layer parameters
 
 We recommend loading `model` and `D` to GPU _before_ fitting:
 ```
@@ -43,7 +50,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               calibrate_losses=true,
               verbosity::Integer=1,
               print_iter::Integer=10,
-              callback=nothing)
+              callback=nothing,
+              update_factors=true,
+              update_layers=true)
     
     #############################
     # Preparations
@@ -107,13 +116,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     X_regularizer = (X, reg) -> model.lambda_X*reg(X)
     Y_regularizer = (Y, reg) -> model.lambda_Y*reg(Y)
 
-    # Initialize some objects to store gradients
-    Y_grad = zero(model.Y)
-    X_grad = zero(model.X)
-    col_layer_grads = fmapstructure(tozero, rec_trainable(col_layers))
-    row_layer_grads = fmapstructure(tozero, rec_trainable(row_layers))
-    noise_model_grads = fmapstructure(tozero, rec_trainable(model.noise_model))
-
     # If no optimiser is provided, initialize
     # the default (an AdaGrad optimiser)
     if opt == nothing
@@ -145,10 +147,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         loss = 0.0
         data_loss = 0.0
 
-        Y_grad .= 0
-        col_layer_grads = fmap(tozero, col_layer_grads)
-        noise_model_grads = fmap(tozero, noise_model_grads)
-
         ######################################
         # Iterate through the ROWS of data
         for row_batch in BatchIter(M, row_batch_size)
@@ -168,39 +166,35 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                     model.Y,
                                     col_layers_view,
                                     model.noise_model)
-
-            #binop!(.+, Y_grad, grads[1])
-            #binop!(.+, col_layer_grads, grads[2])
-            #binop!(.+, noise_model_grads, grads[3])
-            update!(opt, model.Y, grads[1])
-            update!(opt, col_layers_view, grads[2])
-            update!(opt, model.noise_model, grads[3])
-
+            if update_factors
+                update!(opt, model.Y, grads[1])
+            end
+            if update_layers
+                update!(opt, col_layers_view, grads[2])
+                update!(opt, model.noise_model, grads[3])
+            end
         end
 
-        # Accumulate Y regularizer gradient
-        Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
-        #binop!(.+, Y_grad, Y_reg_grad[1])
-        update!(opt, model.Y, Y_reg_grad[1])
- 
-        ## Update Y and the Y regularizer
-        #update!(opt, model.Y, Y_grad)
-        #update!(opt, model.Y_reg, Y_reg_grad[2])
+        Y_reg_loss = 0.0
+        if update_factors
+            Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
+            # Update Y via regularizer gradient
+            update!(opt, model.Y, Y_reg_grad[1])
+            # Update the Y regularizer
+            update!(opt, model.Y_reg, Y_reg_grad[2])
+        end
 
-        # Accumulate layer regularizer gradients
-        col_layer_reg_loss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
-        #binop!(.+, col_layer_grads, reg_grads[1])
-        update!(opt, col_layers, reg_grads[1])
-        
-        # Update layers and layer regularizers
-        #update!(opt, col_layers, col_layer_grads)
-        update!(opt, col_layer_regs, reg_grads[2])
+        if update_layers
+        end
 
-        # Update the noise model
-        #update!(opt, model.noise_model, noise_model_grads)
-
-        X_grad .= 0
-        row_layer_grads = fmap(tozero, row_layer_grads)
+        col_layer_reg_loss = 0.0
+        if update_layers
+            col_layer_reg_loss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
+            # Update column layers via regularizer gradients
+            update!(opt, col_layers, reg_grads[1])
+            # Update column layer regularizer's parameters
+            update!(opt, col_layer_regs, reg_grads[2])
+        end
 
         ######################################
         # Iterate through the COLUMNS of data
@@ -218,31 +212,32 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                                    noise_view, D_v)
 
             batchloss, g = Zygote.withgradient(row_likelihood, model.X, row_layers_view)
-            #binop!(.+, X_grad, g[1])
-            #binop!(.+, row_layer_grads, g[2])
-            update!(opt, model.X, g[1])
-            update!(opt, row_layers, g[2]) 
+            if update_factors
+                update!(opt, model.X, g[1])
+            end
+            if update_layers
+                update!(opt, row_layers, g[2]) 
+            end
             data_loss += batchloss
         end
 
-        # Accumulate X regularizer gradients
-        X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
+        # Update X via regularizer gradients
+        X_reg_loss = 0.0
+        if update_factors
+            X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
+            update!(opt, model.X, X_reg_grads[1])
+            # Update the X regularizer
+            update!(opt, model.X_reg, X_reg_grads[2])
+        end
 
-        #binop!(.+, X_grad, X_reg_grads[1])
-        update!(opt, model.X, X_reg_grads[1])
-
-        # Update X and the X regularizer
-        #update!(opt, model.X, X_grad)
-        update!(opt, model.X_reg, X_reg_grads[2])
-
-        # Accumulate the layer regularizer gradients
-        row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
-        #binop!(.+, row_layer_grads, reg_grads[1])
-        update!(opt, row_layers, reg_grads[1])
-
-        # Update the layers and regularizers
-        #update!(opt, row_layers, row_layer_grads)
-        update!(opt, row_layer_regs, reg_grads[2])
+        row_layer_reg_loss = 0.0
+        if update_layers
+            row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
+            # Update the row layers via regularizer gradients
+            update!(opt, row_layers, reg_grads[1])
+            # Update the row layer regularizer's parameters
+            update!(opt, row_layer_regs, reg_grads[2])
+        end
 
         # Sum the loss components (halve the data loss
         # to account for row-pass and col-pass)
