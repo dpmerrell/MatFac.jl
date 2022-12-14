@@ -145,7 +145,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         end
 
         loss = 0.0
-        data_loss = 0.0
+        d_loss = 0.0
 
         ######################################
         # Iterate through the ROWS of data
@@ -218,7 +218,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             if update_layers
                 update!(opt, row_layers, g[2]) 
             end
-            data_loss += batchloss
+            d_loss += batchloss
         end
 
         # Update X via regularizer gradients
@@ -241,11 +241,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
         # Sum the loss components (halve the data loss
         # to account for row-pass and col-pass)
-        loss = (data_loss + row_layer_reg_loss 
+        loss = (d_loss + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
 
         # Execute the callback (may or may not mutate the model)
-        callback(model, epoch, data_loss, X_reg_loss, Y_reg_loss,
+        callback(model, epoch, d_loss, X_reg_loss, Y_reg_loss,
                                row_layer_reg_loss, col_layer_reg_loss)
 
         # Report the loss
