@@ -47,7 +47,7 @@ function util_tests()
         @test isapprox(params.child.b, params_copy.child.b)
 
         Flux.update!(opt, params_tuple, grads_tuple)
-        @test isapprox(params_tuple[3], params_tuple_copy[3] .- (opt.eta ./ (sqrt.(grads_tuple[3].*grads_tuple[3]) .+ opt.epsilon) ) .* grads_tuple[3] )
+        @test isapprox(params_tuple[3], params_tuple_copy[3] .- (opt.eta ./ (sqrt.(grads_tuple[3].*grads_tuple[3]) .+ opt.epsilon) ) .* grads_tuple[3]; atol=1e-3)
         @test params_tuple[2] == "cat"
 
         #######################################

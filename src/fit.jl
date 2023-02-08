@@ -77,7 +77,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
              )
     end
 
-    inv_MN = 1.0/(M*N)
+    NdK = N/K
+    MdK = M/K
 
     col_batch_size = div(capacity,M)
     row_batch_size = div(capacity,N)
@@ -101,11 +102,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     likelihood = (X,Y,
                   r_layers,
                   c_layers,
-                  noise, D)-> inv_MN*data_loss(X,Y,
-                                               r_layers,
-                                               c_layers,
-                                               noise, D; 
-                                               calibrate=calibrate_losses)
+                  noise, D)-> data_loss(X,Y,
+                                        r_layers,
+                                        c_layers,
+                                        noise, D; 
+                                        calibrate=calibrate_losses)
 
     # Prep the regularizers
     col_layer_regs = make_viewable(model.col_transform_reg)
@@ -113,8 +114,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
    
     col_layer_regularizer = (layers, reg) -> model.lambda_col*reg(layers)
     row_layer_regularizer = (layers, reg) -> model.lambda_row*reg(layers)
-    X_regularizer = (X, reg) -> model.lambda_X*reg(X)
-    Y_regularizer = (Y, reg) -> model.lambda_Y*reg(Y)
+    X_regularizer = (X, reg) -> NdK*model.lambda_X*reg(X)
+    Y_regularizer = (Y, reg) -> MdK*model.lambda_Y*reg(Y)
 
     # If no optimiser is provided, initialize
     # the default (an AdaGrad optimiser)
