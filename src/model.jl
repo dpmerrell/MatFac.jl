@@ -40,7 +40,7 @@ function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
 
     row_transform = make_viewable(row_transform)
     col_transform = make_viewable(col_transform)
-    
+   
     return MatFacModel(X, Y,
                        row_transform,
                        col_transform, 
@@ -170,7 +170,7 @@ end
 ##############################################
 # Equality operation
 EqTypes = Union{CompositeNoise,NormalNoise,PoissonNoise,BernoulliNoise,OrdinalNoise,
-                MatFacModel,ViewableFunction}
+                MatFacModel,NoViewWrapper}
 
 NoEqTypes = Function
 

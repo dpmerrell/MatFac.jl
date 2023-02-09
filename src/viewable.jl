@@ -1,32 +1,37 @@
 
 import Base: view
 
-mutable struct ViewableFunction
-    callable::Function
+
+###############################################
+# Wrapper for layers that are not `view`-able
+###############################################
+
+mutable struct NoViewWrapper
+    callable
 end
 
-function view(vf::ViewableFunction, idx...)
-    return vf
+function view(nvw::NoViewWrapper, idx...)
+    return nvw
 end
 
-function (vf::ViewableFunction)(args...)
-    return vf.callable(args...)
+function (nvw::NoViewWrapper)(args...)
+    return nvw.callable(args...)
 end
 
-# We only want to make *Functions* viewable.
-# Everything else should either be
-# (1) a mutable struct with `view` defined; or
-# (2) something else that causes a problem.
+# Anything that doesn't have 2D `view` defined
+# should be wrapped.
 function make_viewable(obj)
-    return obj
-end
-
-function make_viewable(obj::Function)
-    return ViewableFunction(obj)
+    T = typeof(obj)
+    if hasmethod(view, Tuple{T,UnitRange,UnitRange})
+        return obj
+    else
+        #@info string(obj, " does not have `view(..., ::UnitRange, ::UnitRange)` defined. Its parameters will not be fitted.")
+        return NoViewWrapper(obj)
+    end
 end
 
 # Function should be idempotent
-function make_viewable(obj::ViewableFunction)
+function make_viewable(obj::NoViewWrapper)
     return obj
 end
 

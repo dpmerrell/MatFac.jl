@@ -109,9 +109,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                         calibrate=calibrate_losses)
 
     # Prep the regularizers
-    col_layer_regs = make_viewable(model.col_transform_reg)
-    row_layer_regs = make_viewable(model.row_transform_reg)
-   
+    col_layer_regs = model.col_transform_reg
+    row_layer_regs = model.row_transform_reg
+
     col_layer_regularizer = (layers, reg) -> model.lambda_col*reg(layers)
     row_layer_regularizer = (layers, reg) -> model.lambda_row*reg(layers)
     X_regularizer = (X, reg) -> NdK*model.lambda_X*reg(X)
