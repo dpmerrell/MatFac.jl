@@ -37,6 +37,7 @@ import Functors: fmap, fmapstructure
 fmap(f, t::Tuple{}) = ()
 fmapstructure(f, t::Tuple{}) = ()
 
+
 ###################################################
 # Other arithmetic operations for gradient updates
 ###################################################
@@ -200,14 +201,16 @@ function column_total_loss(noise_model, D, mean_vec)
 end
 
 
-function batched_column_mean_loss(noise_model, D::AbstractMatrix; capacity=Int(25e6))
+function batched_column_M_loss(model, D::AbstractMatrix; capacity=Int(25e6))
 
     M, N = size(D)
-    col_mean_vec = column_means(D)
-   
+    col_M_estimates = compute_M_estimates(model, D; capacity=capacity, verbosity=-1, 
+                                                    lr=1.0, max_epochs=2000, rel_tol=1e-9)
+    col_M_transformed = vec(invlink(model.noise_model, col_M_estimates))
+ 
     reduce_start = similar(D, N)
     reduce_start .= 0
-    col_errors = batched_reduce((v, D) -> v .+ column_total_loss(noise_model, D, col_mean_vec), D; 
+    col_errors = batched_reduce((v, D) -> v .+ column_total_loss(model.noise_model, D, col_M_transformed), D; 
                                 capacity=capacity, start=reduce_start)
     
     M_vec = column_nonnan(D) 
@@ -223,5 +226,7 @@ function batched_data_loss(model, D::AbstractMatrix; capacity=Int(25e6))
                                 model, D; start=0.0, capacity=capacity)
     return total_loss 
 end
+
+
 
 

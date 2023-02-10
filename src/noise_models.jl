@@ -185,11 +185,10 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; k
                Z_bar,
                ChainRulesCore.NoTangent()
     end
-    
-    A .= loss(bn, A, D; kwargs...)
-    tozero!(A, nanvals)
+    larr = loss(bn, A, D; kwargs...)
+    tozero!(larr, nanvals)
 
-    return sum(A), invlinkloss_bernoulli_pullback
+    return sum(larr), invlinkloss_bernoulli_pullback
 end
 
 
@@ -284,9 +283,9 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D; kwa
                ChainRulesCore.NoTangent()
     end
 
-    A .= loss(pn, A, D; kwargs...)
-    tozero!(A, nanvals)
-    result = sum(A)
+    larr = loss(pn, A, D; kwargs...)
+    tozero!(larr, nanvals)
+    result = sum(larr)
 
     return result, invlinkloss_poisson_pullback
 end
@@ -403,6 +402,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
 
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
+    nanvals = (!isfinite).(D)
 
     sort!(on.ext_thresholds)
     ext_thresholds = T.(on.ext_thresholds) 
@@ -410,15 +410,12 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
     r_thresh = ext_thresholds[R_idx]
 
     sig_r = sigmoid(r_thresh .- Z)
-    nanvals = (!isfinite).(sig_r)
     toone!(sig_r, nanvals)
 
     sig_l = sigmoid(l_thresh .- Z)
-    nanvals = (!isfinite).(sig_l)
     tozero!(sig_l, nanvals)
     
     sig_diff = sig_r .- sig_l
-    nanvals = (!isfinite).(sig_diff)
     toone!(sig_diff, nanvals) 
 
     function loss_ordinal_pullback(loss_bar)
@@ -461,7 +458,6 @@ end
 
 # Remember: inverse link == identity function
 invlinkloss(on::OrdinalNoise, Z, D; kwargs...) = sum(loss(on, Z, D; kwargs...))
-
 
 function view(on::OrdinalNoise, idx)
     return OrdinalNoise(view(on.weight, idx), on.ext_thresholds)

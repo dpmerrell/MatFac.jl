@@ -15,7 +15,7 @@ Flux.trainable(ts::TestStruct) = (a=ts.a, b=ts.b)
 
 function util_tests()
 
-    @testset "Utility functions" begin
+    @testset "Package utilities" begin
 
         opt = Flux.Optimise.AdaGrad()
         opt_copy = deepcopy(opt)
@@ -117,10 +117,10 @@ function util_tests()
         @test isapprox(batched_vars, vec(var(A; dims=1, corrected=false)))
 
         #########################################
-        # batched_column_mean_loss
-        noise_model = MF.NormalNoise(20)
-        col_losses = MF.batched_column_mean_loss(noise_model, A)
-        @test isapprox(col_losses, vec(0.5 .* var(A; dims=1, corrected=false)))
+        # batched_column_M_loss
+        matfac = MF.MatFacModel(10, 20, 1, "normal")
+        col_losses = MF.batched_column_M_loss(matfac, A)
+        @test isapprox(col_losses, vec(0.5 .* var(A; dims=1, corrected=false)), atol=0.1)
 
         #########################################
         # batched_data_loss
@@ -128,7 +128,7 @@ function util_tests()
         matfac.X .= 0
         matfac.Y .= 0
         total_loss = MF.batched_data_loss(matfac, A; capacity=20)
-        @test isapprox(total_loss, 0.5*sum(A .* A))
+        @test isapprox(total_loss, 0.5*sum(A .* A), )
 
     end
 
@@ -321,30 +321,42 @@ end
 
 function fit_tests()
 
+    M = 20
+    N = 40
+    K = 3
+    n_loss_types = 4
+    n_logistic = div(N,n_loss_types)
+    n_ordinal = div(N,n_loss_types)
+    n_poisson = div(N,n_loss_types)
+    n_normal = div(N,n_loss_types) 
+
+    col_losses = [repeat(["bernoulli"], n_logistic);
+                  repeat(["normal"], n_normal);
+                  repeat(["poisson"], n_poisson);
+                  repeat(["ordinal5"], n_ordinal)];
+    
+    composite_data = randn(M,N)
+    composite_data[:,1:10] .= 0.0
+    composite_data[:,21:30] .= 2
+    composite_data[:,31:40] .= 4
+
+    to_null = rand(Bool, M, N)
+    #to_null = rand([false, false, true], M, N)
+    composite_data[to_null] .= NaN
+    composite_data[3,1:10] .= 1.0
+    composite_data[9,:] .= NaN
+
+    @testset "M-estimates" begin
+
+        ################################
+        # CPU TESTS
+        model = MF.MatFacModel(M,N,K, col_losses)
+        m_estimates = MF.compute_M_estimates(model, composite_data; print_iter=10, lr=1.0)
+        @test size(model.X) == (K,M)
+        @test size(model.Y) == (K,N)
+    end
+
     @testset "Fit" begin
-        
-        M = 20
-        N = 40
-        K = 3
-        n_loss_types = 4
-        n_logistic = div(N,n_loss_types)
-        n_ordinal = div(N,n_loss_types)
-        n_poisson = div(N,n_loss_types)
-        n_normal = div(N,n_loss_types) 
-
-        col_losses = [repeat(["bernoulli"], n_logistic);
-                      repeat(["normal"], n_normal);
-                      repeat(["poisson"], n_poisson);
-                      repeat(["ordinal5"], n_ordinal)];
-        
-
-        composite_data = zeros(M,N)
-        composite_data[:,21:30] .= 1
-        composite_data[:,31:40] .= 3
-
-        to_null = rand(Bool, M, N)
-        composite_data[to_null] .= NaN
-        composite_data[9,:] .= NaN
 
         #################################
         # CPU TESTS
@@ -355,9 +367,8 @@ function fit_tests()
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10)
-        @test true
-
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, print_iter=1)
+        
         # test whether the parameters were modified
         @test !isapprox(model.X, X_start)
         @test !isapprox(model.Y, Y_start)
@@ -379,7 +390,7 @@ function fit_tests()
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10)
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, print_iter=1)
         @test true
 
         # test whether the parameters were modified
@@ -424,7 +435,7 @@ function callback_tests()
         hcb = MF.HistoryCallback()
 
         # test whether the HistoryCallback records history correctly
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, callback=hcb)
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, callback=hcb, print_iter=1)
         @test length(hcb.history) == 10
 
 

@@ -12,7 +12,8 @@ AbstractOptimiser = Flux.Optimise.AbstractOptimiser
          abs_tol=1e-9, rel_tol=1e-6, 
          verbosity=1, print_iter=10,
          callback=nothing,
-         update_factors=true,
+         update_X=true,
+         update_Y=true,
          update_layers=true)
 
 Fit a MatFacModel to dataset D. 
@@ -31,7 +32,8 @@ Fit a MatFacModel to dataset D.
   information to stdout.
 * `print_iter`: the number of iterations between printouts to stdout
 * `callback`: a function (or callable struct) called at the end of each iteration
-* `update_factors`: whether to update the factors (i.e., setting to false holds X,Y fixed)
+* `update_X`: whether to update the factor X (i.e., setting to false holds X fixed)
+* `update_Y`: whether to update the factor Y (i.e., setting to false holds Y fixed)
 * `update_layers`: whether to update the layer parameters
 
 We recommend loading `model` and `D` to GPU _before_ fitting:
@@ -44,15 +46,22 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
-              abs_tol::Number=1e-9, rel_tol::Number=1e-6,
+              abs_tol::Number=1e-9, rel_tol::Number=1e-9,
               tol_max_iters::Number=3, 
               scale_column_losses=true,
               calibrate_losses=true,
               verbosity::Integer=1,
               print_iter::Integer=10,
               callback=nothing,
-              update_factors=true,
-              update_layers=true)
+              update_X=true,
+              update_Y=true,
+              update_row_layers=true,
+              update_col_layers=true,
+              update_X_reg=true,
+              update_Y_reg=true,
+              update_row_layers_reg=true,
+              update_col_layers_reg=true,
+              )
     
     #############################
     # Preparations
@@ -86,8 +95,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        col_errors = batched_column_mean_loss(model.noise_model, D; 
-                                              capacity=capacity)
+        col_errors = batched_column_M_loss(model, D; 
+                                           capacity=capacity)
         weights = abs.(1 ./ col_errors)
         weights = map(x -> max(x, 1e-5), weights)
         weights[ (!isfinite).(weights) ] .= 1
@@ -150,94 +159,112 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
         ######################################
         # Iterate through the ROWS of data
-        for row_batch in BatchIter(M, row_batch_size)
+        if (update_Y | update_col_layers)
+            for row_batch in BatchIter(M, row_batch_size)
 
-            X_view = view(model.X, :, row_batch)
-            D_v = view(D, row_batch, :)
-            row_layers_view = view(row_layers, row_batch, 1:N)
-            col_layers_view = view(col_layers, row_batch, 1:N)
+                X_view = view(model.X, :, row_batch)
+                D_v = view(D, row_batch, :)
+                row_layers_view = view(row_layers, row_batch, 1:N)
+                col_layers_view = view(col_layers, row_batch, 1:N)
 
-            # Define the likelihood for this batch
-            col_likelihood = (Y, cl, noise) -> likelihood(X_view, Y, 
-                                                          row_layers_view, cl, 
-                                                          noise, D_v)
+                # Define the likelihood for this batch
+                col_likelihood = (Y, cl, noise) -> likelihood(X_view, Y, 
+                                                              row_layers_view, cl, 
+                                                              noise, D_v)
 
-            # Accumulate the gradient
-            grads = Zygote.gradient(col_likelihood, 
-                                    model.Y,
-                                    col_layers_view,
-                                    model.noise_model)
-            if update_factors
-                update!(opt, model.Y, grads[1])
-            end
-            if update_layers
-                update!(opt, col_layers_view, grads[2])
-                update!(opt, model.noise_model, grads[3])
+                # Accumulate the gradient
+                batchloss, grads = Zygote.withgradient(col_likelihood, 
+                                                 model.Y,
+                                                 col_layers_view,
+                                                 model.noise_model)
+                d_loss += batchloss
+                if update_Y
+                    update!(opt, model.Y, grads[1])
+                end
+                if update_col_layers
+                    update!(opt, col_layers_view, grads[2])
+                    update!(opt, model.noise_model, grads[3])
+                end
             end
         end
 
         Y_reg_loss = 0.0
-        if update_factors
+        if (update_Y | update_Y_reg)
             Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
-            # Update Y via regularizer gradient
-            update!(opt, model.Y, Y_reg_grad[1])
-            # Update the Y regularizer
-            update!(opt, model.Y_reg, Y_reg_grad[2])
-        end
-
-        if update_layers
+            if update_Y
+                # Update Y via regularizer gradient
+                update!(opt, model.Y, Y_reg_grad[1])
+            end
+            if update_Y_reg
+                # Update the Y regularizer
+                update!(opt, model.Y_reg, Y_reg_grad[2])
+            end
         end
 
         col_layer_reg_loss = 0.0
-        if update_layers
+        if (update_col_layers | update_col_layers_reg)
             col_layer_reg_loss, reg_grads = Zygote.withgradient(col_layer_regularizer, col_layers, col_layer_regs)
+            if update_col_layers
             # Update column layers via regularizer gradients
-            update!(opt, col_layers, reg_grads[1])
+                update!(opt, col_layers, reg_grads[1])
+            end
+            if update_col_layers_reg
             # Update column layer regularizer's parameters
-            update!(opt, col_layer_regs, reg_grads[2])
+                update!(opt, col_layer_regs, reg_grads[2])
+            end
         end
 
         ######################################
         # Iterate through the COLUMNS of data
-        for col_batch in BatchIter(N, col_batch_size)
-            
-            D_v = view(D, :, col_batch)
-            noise_view = view(model.noise_model, col_batch)
-            Y_view = view(model.Y, :, col_batch)
+        if (update_X | update_row_layers)
+            for col_batch in BatchIter(N, col_batch_size)
+                
+                D_v = view(D, :, col_batch)
+                noise_view = view(model.noise_model, col_batch)
+                Y_view = view(model.Y, :, col_batch)
 
-            row_layers_view = view(row_layers, 1:M, col_batch)
-            col_layers_view = view(col_layers, 1:M, col_batch)
+                row_layers_view = view(row_layers, 1:M, col_batch)
+                col_layers_view = view(col_layers, 1:M, col_batch)
 
-            row_likelihood = (X, rl) -> likelihood(X, Y_view, 
-                                                   rl, col_layers_view, 
-                                                   noise_view, D_v)
+                row_likelihood = (X, rl) -> likelihood(X, Y_view, 
+                                                       rl, col_layers_view, 
+                                                       noise_view, D_v)
 
-            batchloss, g = Zygote.withgradient(row_likelihood, model.X, row_layers_view)
-            if update_factors
-                update!(opt, model.X, g[1])
+                batchloss, g = Zygote.withgradient(row_likelihood, model.X, row_layers_view)
+                d_loss += batchloss
+
+                if update_X
+                    update!(opt, model.X, g[1])
+                end
+                if update_row_layers
+                    update!(opt, row_layers, g[2]) 
+                end
             end
-            if update_layers
-                update!(opt, row_layers, g[2]) 
-            end
-            d_loss += batchloss
         end
-
         # Update X via regularizer gradients
         X_reg_loss = 0.0
-        if update_factors
+        if (update_X | update_X_reg)
             X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
-            update!(opt, model.X, X_reg_grads[1])
-            # Update the X regularizer
-            update!(opt, model.X_reg, X_reg_grads[2])
+            if update_X
+                update!(opt, model.X, X_reg_grads[1])
+            end
+            if update_X_reg
+                # Update the X regularizer
+                update!(opt, model.X_reg, X_reg_grads[2])
+            end
         end
 
         row_layer_reg_loss = 0.0
-        if update_layers
+        if (update_row_layers | update_row_layers_reg)
             row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
-            # Update the row layers via regularizer gradients
-            update!(opt, row_layers, reg_grads[1])
-            # Update the row layer regularizer's parameters
-            update!(opt, row_layer_regs, reg_grads[2])
+            if update_row_layers
+                # Update the row layers via regularizer gradients
+                update!(opt, row_layers, reg_grads[1])
+            end
+            if update_row_layers_reg
+                # Update the row layer regularizer's parameters
+                update!(opt, row_layer_regs, reg_grads[2])
+            end
         end
 
         # Sum the loss components (halve the data loss
@@ -287,5 +314,39 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
     return model
 end
+
+
+############################################################
+# Compute M-estimates for columns
+############################################################
+
+
+function compute_M_estimates(model, D; kwargs...)
+
+    K, M = size(model.X)
+    N = size(model.Y, 2)
+
+    model_copy = deepcopy(model)
+    model_copy.X = similar(model.X, (1,M))
+    model_copy.X .= 1
+    model_copy.Y = similar(model.Y, (1,N))
+    model_copy.Y .= 0 
+    model_copy.row_transform = x->x
+    model_copy.col_transform = x->x
+
+    fit!(model_copy, D; scale_column_losses=false, 
+                        update_X=false, 
+                        update_row_layers=false,
+                        update_col_layers=false,
+                        update_X_reg=false,
+                        update_Y_reg=false,
+                        update_row_layers_reg=false,
+                        update_col_layers_reg=false,
+                        kwargs...)
+
+    return model_copy.Y
+end
+
+
 
 
