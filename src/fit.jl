@@ -95,12 +95,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     # Reweight the column losses if necessary
     if scale_column_losses
         vprint("Re-weighting column losses\n")
-        col_errors = batched_column_M_loss(model, D; 
-                                           capacity=capacity)
-        weights = abs.(1 ./ col_errors)
-        weights = map(x -> max(x, 1e-5), weights)
-        weights[ (!isfinite).(weights) ] .= 1
-        set_weight!(model.noise_model, weights)
+        rescale_column_losses!(model, D)
     end
 
     # Prep the row and column transformations 
@@ -317,10 +312,10 @@ end
 
 
 ############################################################
-# Compute M-estimates for columns
+# Rescaling column losses
 ############################################################
 
-
+# Compute M-estimates of columns
 function compute_M_estimates(model, D; kwargs...)
 
     K, M = size(model.X)
@@ -331,8 +326,6 @@ function compute_M_estimates(model, D; kwargs...)
     model_copy.X .= 1
     model_copy.Y = similar(model.Y, (1,N))
     model_copy.Y .= 0 
-    model_copy.row_transform = x->x
-    model_copy.col_transform = x->x
 
     fit!(model_copy, D; scale_column_losses=false, 
                         update_X=false, 
@@ -347,6 +340,44 @@ function compute_M_estimates(model, D; kwargs...)
     return model_copy.Y
 end
 
+# Compute columns' sum-squared-gradients of loss
+# w.r.t. given M-estimates.
+function column_ssq_grads(model, D, m_row)
 
+    m_mat = repeat(m_row, size(D,1), 1)
+    grads = Zygote.gradient(Z -> invlinkloss(model.noise_model, 
+                                     model.col_transform(
+                                         model.row_transform(Z
+                                         )
+                                     ),
+                                 D), m_mat
+                            )[1]
+    return sum(grads .* grads; dims=1)
+end 
+
+# Rescale the column losses in such a way that each
+# column loss yields an X-gradient of similar magnitude
+function rescale_column_losses!(model, D; capacity::Integer=10^8)
+
+    K,N = size(model.Y)
+
+    # Compute M-estimates for the columns
+    col_M_estimates = compute_M_estimates(model, D; capacity=capacity, verbosity=-1, 
+                                                    lr=1.0, max_epochs=1000, rel_tol=1e-9)
+    # For each column, compute the sum of squared partial derivatives
+    # of loss w.r.t. the M-estimates. (This turns out to be an appropriate
+    # scaling factor.)
+    reduce_start = similar(D, (1,N))
+    reduce_start .= 0
+    ssq_grads = vec(batched_reduce((v, mod, D) -> v .+ column_ssq_grads(mod, D, col_M_estimates),
+                                   model, D; start=reduce_start))
+    M = column_nonnan(D)
+    weights = sqrt.(M ./ ssq_grads)
+    weights[ (!isfinite).(weights) ] .= 1
+    weights = map(x -> max(x, 1e-5), weights)
+    weights = map(x -> min(x, 10.0), weights)
+    set_weight!(model.noise_model, vec(weights))
+
+end
 
 

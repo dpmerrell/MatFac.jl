@@ -117,12 +117,6 @@ function util_tests()
         @test isapprox(batched_vars, vec(var(A; dims=1, corrected=false)))
 
         #########################################
-        # batched_column_M_loss
-        matfac = MF.MatFacModel(10, 20, 1, "normal")
-        col_losses = MF.batched_column_M_loss(matfac, A)
-        @test isapprox(col_losses, vec(0.5 .* var(A; dims=1, corrected=false)), atol=0.1)
-
-        #########################################
         # batched_data_loss
         matfac = MF.MatFacModel(10, 20, 1, "normal")
         matfac.X .= 0
@@ -337,8 +331,9 @@ function fit_tests()
     
     composite_data = randn(M,N)
     composite_data[:,1:10] .= 0.0
-    composite_data[:,21:30] .= 2
-    composite_data[:,31:40] .= 4
+    #composite_data[:,21:30] .= rand([2,3,4], M, 10)
+    composite_data[:,21:30] .= 2.0 
+    composite_data[:,31:40] .= rand([2,3,4], M, 10)
 
     to_null = rand(Bool, M, N)
     #to_null = rand([false, false, true], M, N)
@@ -354,6 +349,10 @@ function fit_tests()
         m_estimates = MF.compute_M_estimates(model, composite_data; print_iter=10, lr=1.0)
         @test size(model.X) == (K,M)
         @test size(model.Y) == (K,N)
+    end
+
+    @testset "Rescale column losses" begin
+
     end
 
     @testset "Fit" begin
