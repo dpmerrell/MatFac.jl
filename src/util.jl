@@ -225,7 +225,7 @@ function batched_link_scale(nm, D; capacity=10^8)
     sumsq_vec = vec(batched_mapreduce(d -> link(nm, d).^2, 
                                       (s, Z) -> s .+ sum(Z, dims=1), 
                                       D; start=reduce_start, capacity=capacity)
-                  ) ./ M_vec
+                  ) 
     meansq_vec = sumsq_vec ./ M_vec
     var_vec = meansq_vec .- (mean_vec.*mean_vec)
 
