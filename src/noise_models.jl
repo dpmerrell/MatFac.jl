@@ -66,8 +66,7 @@ end
 
 
 function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8)
-    _, col_vars = batched_column_meanvar(D; capacity=capacity)
-    return sqrt.(col_vars) 
+    return batched_link_scale(nn, D; capacity=capacity) 
 end
 
 
@@ -549,6 +548,7 @@ link(cn::CompositeNoise, D) = hcat(map((n,rng) -> link(n, view(D,:,rng)), cn.noi
 invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
 loss(cn::CompositeNoise, Z, D; kwargs...) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 invlinkloss(cn::CompositeNoise, A, D; kwargs...) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges))
+link_scale(cn::CompositeNoise, D; kwargs...) = vcat(map((n,rng) -> link_scale(n, view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 
 function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D; kwargs...)
 
