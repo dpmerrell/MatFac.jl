@@ -350,10 +350,21 @@ function column_ssq_grads(model, D, m_row)
                                          model.row_transform(Z
                                          )
                                      ),
-                                 D), m_mat
+                                 D; calibrate=false), m_mat
                             )[1]
     return sum(grads .* grads; dims=1)
 end 
+
+
+function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=10^8)
+    N = size(D, 2)
+    reduce_start = similar(D, (1,N))
+    reduce_start .= 0
+    ssq_grads = batched_reduce((v, mod, D) -> v .+ column_ssq_grads(mod, D, col_M_estimates),
+                                   model, D; start=reduce_start, capacity=capacity)
+    return ssq_grads
+end
+
 
 # Rescale the column losses in such a way that each
 # column loss yields an X-gradient of similar magnitude
@@ -367,14 +378,12 @@ function rescale_column_losses!(model, D; capacity::Integer=10^8)
     # For each column, compute the sum of squared partial derivatives
     # of loss w.r.t. the M-estimates. (This turns out to be an appropriate
     # scaling factor.)
-    reduce_start = similar(D, (1,N))
-    reduce_start .= 0
-    ssq_grads = vec(batched_reduce((v, mod, D) -> v .+ column_ssq_grads(mod, D, col_M_estimates),
-                                   model, D; start=reduce_start))
+    ssq_grads = vec(batched_column_ssq_grads(model, col_M_estimates, D; capacity=capacity))
+
     M = column_nonnan(D)
     weights = sqrt.(M ./ ssq_grads)
     weights[ (!isfinite).(weights) ] .= 1
-    weights = map(x -> max(x, 1e-5), weights)
+    weights = map(x -> max(x, 1e-2), weights)
     weights = map(x -> min(x, 10.0), weights)
     set_weight!(model.noise_model, vec(weights))
 

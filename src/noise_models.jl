@@ -65,6 +65,12 @@ function view(nn::NormalNoise, idx)
 end
 
 
+function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8)
+    _, col_vars = batched_column_meanvar(D; capacity=capacity)
+    return sqrt.(col_vars) 
+end
+
+
 #########################################################
 # Bernoulli (logistic) noise model
 #########################################################
@@ -197,6 +203,16 @@ function view(bn::BernoulliNoise, idx)
 end
 
 
+function link_scale(bn::BernoulliNoise, D::AbstractMatrix; capacity=10^8)
+    N = size(D,2)
+    p_vec = cpu(column_means(D; capacity=capacity))
+    mu_vec = logit(p_vec)
+    scale_vec = similar(D, N)
+    scale_vec .= mu_vec / quantile(Normal(), 1 .- p_vec)
+    return scale_vec
+end
+
+
 #########################################################
 # Poisson noise model
 #########################################################
@@ -297,6 +313,11 @@ end
 
 
 poisson_sample(z) = rand(Poisson(z))
+
+
+function link_scale(pn::PoissonNoise, D::AbstractMatrix; capacity=10^8)
+    return batched_link_scale(pn, D; capacity=capacity)
+end
 
 
 #########################################################
@@ -456,13 +477,19 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
     return l, loss_ordinal_pullback
 end
 
+
 # Remember: inverse link == identity function
 invlinkloss(on::OrdinalNoise, Z, D; kwargs...) = sum(loss(on, Z, D; kwargs...))
+
 
 function view(on::OrdinalNoise, idx)
     return OrdinalNoise(view(on.weight, idx), on.ext_thresholds)
 end
 
+
+function link_scale(ord::OrdinalNoise, D::AbstractMatrix; capacity=10^8)
+    return batched_link_scale(ord, D; capacity=capacity)
+end
 
 #########################################################
 # "Composite" noise model

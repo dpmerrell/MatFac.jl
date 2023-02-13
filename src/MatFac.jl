@@ -1,7 +1,7 @@
 
 module MatFac
 
-using Flux, Functors, Zygote, ChainRules, ChainRulesCore, CUDA, BSON, Random
+using Flux, Functors, Zygote, ChainRules, ChainRulesCore, CUDA, BSON, Random, Distributions
 
 include("batch_iter.jl")
 include("util.jl")

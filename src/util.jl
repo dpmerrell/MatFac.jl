@@ -116,19 +116,23 @@ end
 # "Batched" operations for large arrays
 ###################################################
 
-
-function batched_reduce(r, D_list...; capacity=Int(25e6), start=0.0)
+function batched_mapreduce(red, mp, D_list...; capacity=Int(25e6), start=0.0)
 
     M, N = size(D_list[1])
     row_batch_size = div(capacity, N)
-    result = start 
- 
+    result = start
+
     for row_batch in BatchIter(M, row_batch_size)
-        view_list = [view(D, row_batch, :) for D in D_list]
-        result = r(result, view_list...)
+        view_tuple = map(D -> view(D, row_batch, :), D_list)
+        result = red(result, mp(view_tuple...)...)
     end
 
     return result
+end
+
+
+function batched_reduce(red, D_list...; kwargs...)
+    return batched_mapreduce(red, (x...) -> x, D_list...; kwargs...)
 end 
 
 
@@ -189,6 +193,50 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
     tonan!(D, nan_idx)
 
     return mean_vec, var_vec
+end
+
+
+function link_ssq(nm, D)
+    L = similar(D)
+    L .= link(nm, D)
+    return sum(L .* L, dims=1)
+end
+
+
+function batched_link_scale(nm, D; capacity=10^8)
+
+    M, N = size(D)
+    
+    # Replace NaNs with zeros
+    nan_idx = isnan.(D)
+    nonnan_idx = (!).(nan_idx)
+    tozero!(D, nan_idx)
+    M_vec = vec(sum(nonnan_idx, dims=1))
+
+    # Compute column means -- after link function
+    reduce_start = similar(D, 1, N)
+    reduce_start .= 0
+    mean_vec = vec(batched_mapreduce((s, Z) -> s .+ sum(Z, dims=1), 
+                                     link, 
+                                     D; start=reduce_start, capacity=capacity)
+                  ) ./ M_vec
+
+    # Compute column variances via 
+    # V[x] = E[x^2] - E[x]^2
+    # (after link function)
+    reduce_start = similar(D, 1, N)
+    reduce_start .= 0
+    sumsq_vec = vec(batched_mapreduce((s, Z) -> s .+ sum(Z, dims=1), 
+                                      link_ssq, 
+                                      D; start=reduce_start, capacity=capacity)
+                  ) ./ M_vec
+    meansq_vec = sumsq_vec ./ M_vec
+    var_vec = meansq_vec .- (mean_vec.*mean_vec)
+
+    # Restore NaN values
+    tonan!(D, nan_idx)
+
+    return sqrt.(var_vec)
 end
 
 
