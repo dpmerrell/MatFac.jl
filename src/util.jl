@@ -17,6 +17,10 @@ function update!(opt::Optimiser, params::Any, grads::Nothing)
     return
 end
 
+function update!(opt::Optimiser, params::AbstractArray, grads::Nothing)
+    return
+end
+
 function update!(opt::Optimiser, params::Any, grads::TupleTypes)
     for pname in propertynames(grads)
         g = getproperty(grads,pname)
@@ -116,7 +120,7 @@ end
 # "Batched" operations for large arrays
 ###################################################
 
-function batched_mapreduce(red, mp, D_list...; capacity=Int(25e6), start=0.0)
+function batched_mapreduce(mp, red, D_list...; capacity=Int(25e6), start=0.0)
 
     M, N = size(D_list[1])
     row_batch_size = div(capacity, N)
@@ -124,15 +128,14 @@ function batched_mapreduce(red, mp, D_list...; capacity=Int(25e6), start=0.0)
 
     for row_batch in BatchIter(M, row_batch_size)
         view_tuple = map(D -> view(D, row_batch, :), D_list)
-        result = red(result, mp(view_tuple...)...)
+        result = red(result, mp(view_tuple...))
     end
 
     return result
 end
 
-
-function batched_reduce(red, D_list...; kwargs...)
-    return batched_mapreduce(red, (x...) -> x, D_list...; kwargs...)
+function batched_reduce(red, D::AbstractMatrix; kwargs...)
+    return batched_mapreduce(x -> x, red, D; kwargs...)
 end 
 
 
@@ -183,7 +186,7 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
     # V[x] = E[x^2] - E[x]^2
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    sumsq_vec = vec(batched_reduce((D1, D2) -> D1 .+ sum(D2.*D2; dims=1), D;
+    sumsq_vec = vec(batched_reduce((v, D2) -> v .+ sum(D2.*D2; dims=1), D;
                                  start=reduce_start, capacity=capacity)
                    )
     meansq_vec = sumsq_vec ./ M_vec
@@ -193,13 +196,6 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
     tonan!(D, nan_idx)
 
     return mean_vec, var_vec
-end
-
-
-function link_ssq(nm, D)
-    L = similar(D)
-    L .= link(nm, D)
-    return sum(L .* L, dims=1)
 end
 
 
@@ -216,8 +212,8 @@ function batched_link_scale(nm, D; capacity=10^8)
     # Compute column means -- after link function
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    mean_vec = vec(batched_mapreduce((s, Z) -> s .+ sum(Z, dims=1), 
-                                     link, 
+    mean_vec = vec(batched_mapreduce(d -> link(nm, d), 
+                                     (s, Z) -> s .+ sum(Z, dims=1), 
                                      D; start=reduce_start, capacity=capacity)
                   ) ./ M_vec
 
@@ -226,8 +222,8 @@ function batched_link_scale(nm, D; capacity=10^8)
     # (after link function)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    sumsq_vec = vec(batched_mapreduce((s, Z) -> s .+ sum(Z, dims=1), 
-                                      link_ssq, 
+    sumsq_vec = vec(batched_mapreduce(d -> link(nm, d).^2, 
+                                      (s, Z) -> s .+ sum(Z, dims=1), 
                                       D; start=reduce_start, capacity=capacity)
                   ) ./ M_vec
     meansq_vec = sumsq_vec ./ M_vec
@@ -252,8 +248,9 @@ end
 function batched_data_loss(model, D::AbstractMatrix; capacity=Int(25e6))
 
     M, N = size(D)
-    total_loss = batched_reduce((ls, model, D) -> ls + data_loss(model, D; calibrate=true), 
-                                model, D; start=0.0, capacity=capacity)
+    total_loss = batched_mapreduce((model, D) -> data_loss(model, D; calibrate=true),
+                                   (x,y) -> x+y, 
+                                   model, D; start=0.0, capacity=capacity)
     return total_loss 
 end
 

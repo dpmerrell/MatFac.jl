@@ -360,8 +360,9 @@ function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=1
     N = size(D, 2)
     reduce_start = similar(D, (1,N))
     reduce_start .= 0
-    ssq_grads = batched_reduce((v, mod, D) -> v .+ column_ssq_grads(mod, D, col_M_estimates),
-                                   model, D; start=reduce_start, capacity=capacity)
+    ssq_grads = batched_mapreduce((mod, D) -> column_ssq_grads(mod, D, col_M_estimates),
+                                  (x, y) -> x .+ y,
+                                  model, D; start=reduce_start, capacity=capacity)
     return ssq_grads
 end
 
