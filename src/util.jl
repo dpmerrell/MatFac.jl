@@ -30,6 +30,11 @@ function update!(opt::Optimiser, params::Any, grads::TupleTypes)
     end
 end
 
+# We do not update pure functions!
+function update!(opt::Optimiser, params::Function, grads::TupleTypes)
+    return
+end
+
 
 #################################################
 # Extensions to Functors' fmap functions
