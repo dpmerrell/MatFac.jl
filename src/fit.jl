@@ -327,6 +327,8 @@ function compute_M_estimates(model, D; kwargs...)
     model_copy.Y = similar(model.Y, (1,N))
     model_copy.Y .= 0 
 
+    model_copy.Y_reg = (x -> 0.0)
+
     fit!(model_copy, D; scale_column_losses=false, 
                         update_X=false, 
                         update_row_layers=false,
