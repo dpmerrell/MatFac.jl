@@ -1,5 +1,5 @@
 
-import Base: view, deepcopy
+import Base: view, getindex, deepcopy
 
 export MatFacModel, save_model, load_model
 
@@ -37,18 +37,17 @@ function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
                      lambda_X=1.0, lambda_Y=1.0,
                      lambda_row=1.0, lambda_col=1.0,
                      lambda_noise=1.0)
-
-    row_transform = make_viewable(row_transform)
-    col_transform = make_viewable(col_transform)
    
+    objs = [row_transform, col_transform,
+            noise_model,
+            X_reg, Y_reg,
+            row_transform_reg, col_transform_reg,
+            noise_model_reg]
+
+    map!(make_viewable, objs, objs)
+ 
     return MatFacModel(X, Y,
-                       row_transform,
-                       col_transform, 
-                       noise_model,
-                       X_reg, Y_reg,
-                       row_transform_reg, 
-                       col_transform_reg, 
-                       noise_model_reg,
+                       objs...,
                        lambda_X, lambda_Y,
                        lambda_row, lambda_col,
                        lambda_noise)
@@ -150,15 +149,42 @@ end
 
 function view(bm::MatFacModel, idx1, idx2)
     return MatFacModel(view(bm.X, :, idx1),
-                            view(bm.Y, :, idx2),
-                            view(bm.row_transform, idx1, idx2),
-                            view(bm.col_transform, idx1, idx2),
-                            view(bm.noise_model, idx2),
-                            nothing, nothing, nothing,
-                            nothing, nothing,
-                            0.0, 0.0, 0.0, 0.0, 0.0
-                           )
+                       view(bm.Y, :, idx2),
+                       view(bm.row_transform, idx1, idx2),
+                       view(bm.col_transform, idx1, idx2),
+                       view(bm.noise_model, idx2),
+                       view(bm.X_reg, idx1), 
+                       view(bm.Y_reg, idx2),
+                       view(bm.row_transform_reg, idx1, idx2),
+                       view(bm.col_transform_reg, idx1, idx2),
+                       view(bm.noise_model_reg, idx2),
+                       bm.lambda_X, 
+                       bm.lambda_Y,
+                       bm.lambda_row,
+                       bm.lambda_col,
+                       bm.lambda_noise
+                       )
 
+end
+
+
+function Base.getindex(bm::MatFacModel, idx1, idx2)
+    return MatFacModel(Base.getindex(bm.X, :, idx1),
+                       Base.getindex(bm.Y, :, idx2),
+                       Base.getindex(bm.row_transform, idx1, idx2),
+                       Base.getindex(bm.col_transform, idx1, idx2),
+                       Base.getindex(bm.noise_model, idx2),
+                       Base.getindex(bm.X_reg, idx1), 
+                       Base.getindex(bm.Y_reg, idx2),
+                       Base.getindex(bm.row_transform_reg, idx1, idx2),
+                       Base.getindex(bm.col_transform_reg, idx1, idx2),
+                       Base.getindex(bm.noise_model_reg, idx2),
+                       bm.lambda_X, 
+                       bm.lambda_Y,
+                       bm.lambda_row,
+                       bm.lambda_col,
+                       bm.lambda_noise
+                       )
 end
 
 

@@ -60,10 +60,13 @@ end
 
 invlinkloss(nn::NormalNoise, Z, D; kwargs...) = sum(loss(nn::NormalNoise, Z, D; kwargs...))
 
-function view(nn::NormalNoise, idx)
-    return NormalNoise(view(nn.weight, idx))
+function Base.view(nn::NormalNoise, idx)
+    return NormalNoise(Base.view(nn.weight, idx))
 end
 
+function Base.getindex(nn::NormalNoise, idx)
+    return NormalNoise(Base.getindex(nn.weight, idx))
+end
 
 function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8)
     return batched_link_scale(nn, D; capacity=capacity) 
@@ -197,10 +200,13 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), bn::BernoulliNoise, Z, D; k
 end
 
 
-function view(bn::BernoulliNoise, idx)
-    return BernoulliNoise(view(bn.weight, idx))
+function Base.view(bn::BernoulliNoise, idx)
+    return BernoulliNoise(Base.view(bn.weight, idx))
 end
 
+function Base.getindex(bn::BernoulliNoise, idx)
+    return BernoulliNoise(Base.getindex(bn.weight, idx))
+end
 
 function link_scale(bn::BernoulliNoise, D::AbstractMatrix; capacity=10^8)
     N = size(D,2)
@@ -306,10 +312,13 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), pn::PoissonNoise, Z, D; kwa
 end
 
 
-function view(pn::PoissonNoise, idx)
-    return PoissonNoise(view(pn.weight, idx))
+function Base.view(pn::PoissonNoise, idx)
+    return PoissonNoise(Base.view(pn.weight, idx))
 end
 
+function Base.getindex(pn::PoissonNoise, idx)
+    return PoissonNoise(Base.getindex(pn.weight, idx))
+end
 
 poisson_sample(z) = rand(Poisson(z))
 
@@ -481,10 +490,13 @@ end
 invlinkloss(on::OrdinalNoise, Z, D; kwargs...) = sum(loss(on, Z, D; kwargs...))
 
 
-function view(on::OrdinalNoise, idx)
-    return OrdinalNoise(view(on.weight, idx), on.ext_thresholds)
+function Base.view(on::OrdinalNoise, idx)
+    return OrdinalNoise(Base.view(on.weight, idx), on.ext_thresholds)
 end
 
+function Base.getindex(on::OrdinalNoise, idx)
+    return OrdinalNoise(Base.getindex(on.weight, idx), copy(on.ext_thresholds))
+end
 
 function link_scale(ord::OrdinalNoise, D::AbstractMatrix; capacity=10^8)
     return batched_link_scale(ord, D; capacity=capacity)
@@ -522,7 +534,7 @@ function CompositeNoise(noise_model_ids::Vector{String};
 end
 
 
-function view(cn::CompositeNoise, idx::UnitRange)
+function Base.view(cn::CompositeNoise, idx::UnitRange)
 
     new_ranges, r_min, r_max = subset_ranges(cn.col_ranges, idx)
     shifted_new_ranges = shift_range.(new_ranges, (1 - new_ranges[1].start))
@@ -539,10 +551,46 @@ function view(cn::CompositeNoise, idx::UnitRange)
 end
 
 
-function view(cn::CompositeNoise, idx::Colon)
+function Base.view(cn::CompositeNoise, idx::Colon)
     idx = 1:cn.col_ranges[end].stop
     return view(cn, idx)
 end
+
+
+function Base.getindex(cn::CompositeNoise, idx)
+
+    # Map from column index to column range index
+    idx_to_oldrange = Dict(old_i => k for (k,r) in enumerate(cn.col_ranges) for old_i in r)
+    oldranges = map(i -> idx_to_oldrange[i], idx)
+    # Collect (a) the starts of new ranges, and
+    # (b) the "irredundant" values of the old ranges 
+    new_starts = [1]
+    cur_r = oldranges[1]
+    irredundant_r = [cur_r]
+    for (new_i,r) in enumerate(oldranges)
+        if r != cur_r
+            push!(new_starts, new_i)
+            push!(irredundant_r, r)
+            cur_r = r
+        end
+    end
+    new_stops = vcat(new_starts[2:end] .- 1, [length(idx)])
+    new_ranges = map((strt,stp) -> strt:stp, new_starts, new_stops) 
+  
+    # Collect the indices for viewing into the old noise models. 
+    view_idx = [] 
+    for (old_r, rng) in zip(irredundant_r, new_ranges)
+        old_range = cn.col_ranges[old_r]
+        vi = idx[rng] .- old_range.start .+ 1
+        push!(view_idx, vi)
+    end 
+
+    new_noises = map((ir, vi) -> cn.noises[ir][vi], irredundant_r, view_idx)
+
+    return CompositeNoise(Tuple(new_ranges), 
+                          Tuple(new_noises))
+end
+
 
 link(cn::CompositeNoise, D) = hcat(map((n,rng) -> link(n, view(D,:,rng)), cn.noises, cn.col_ranges)...)
 invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)

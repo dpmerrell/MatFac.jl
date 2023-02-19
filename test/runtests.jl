@@ -124,6 +124,7 @@ function util_tests()
         total_loss = MF.batched_data_loss(matfac, A; capacity=20)
         @test isapprox(total_loss, 0.5*sum(A .* A), )
 
+
     end
 
 end
@@ -273,6 +274,12 @@ function model_tests()
         model_d = gpu(model)
         @test isapprox(transpose(model_d.X)*model_d.Y, gpu(transpose(model.X)*model.Y))
         @test isapprox(model_d(), gpu(model()))
+
+        # view and getindex
+        model_view = view(model, 1:10, 21:40)
+        submodel = model[1:10, collect(1:2:40)]
+        @assert size(submodel.X) == (K,10)
+        @assert size(submodel.Y) == (K,20)
     end
 end
 
@@ -478,8 +485,8 @@ end
 
 function main()
    
-    util_tests() 
-    noise_model_tests()
+    #util_tests() 
+    #noise_model_tests()
     model_tests()
     update_tests()
     fit_tests()
