@@ -534,7 +534,7 @@ function CompositeNoise(noise_model_ids::Vector{String};
 end
 
 
-function Base.view(cn::CompositeNoise, idx::UnitRange)
+function Base.view(cn::CompositeNoise, idx::AbstractRange)
 
     new_ranges, r_min, r_max = subset_ranges(cn.col_ranges, idx)
     shifted_new_ranges = shift_range.(new_ranges, (1 - new_ranges[1].start))

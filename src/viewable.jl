@@ -26,12 +26,12 @@ end
 # should be wrapped.
 function make_viewable(obj)
     T = typeof(obj)
-    if (hasmethod(view, Tuple{T,UnitRange}) | 
-        hasmethod(view, Tuple{T,Vararg}) |
-        hasmethod(view, Tuple{T,Any})) 
+    if (hasmethod(view, Tuple{T,Any}) | 
+        hasmethod(view, Tuple{T,Any,Any})|
+        hasmethod(view, Tuple{T,AbstractRange})|
+        hasmethod(view, Tuple{T,AbstractRange,AbstractRange})) 
        return obj
     else
-        #@info string(obj, " does not have `view(..., ::UnitRange, ::UnitRange)` defined. Its parameters will not be fitted.")
         return NoViewWrapper(obj)
     end
 end

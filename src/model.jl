@@ -39,15 +39,16 @@ function MatFacModel(X::AbstractMatrix, Y::AbstractMatrix,
                      lambda_noise=1.0)
    
     objs = [row_transform, col_transform,
-            noise_model,
-            X_reg, Y_reg,
-            row_transform_reg, col_transform_reg,
-            noise_model_reg]
+            noise_model]
 
     map!(make_viewable, objs, objs)
  
     return MatFacModel(X, Y,
                        objs...,
+                       X_reg, Y_reg,
+                       row_transform_reg,
+                       col_transform_reg,
+                       noise_model_reg,
                        lambda_X, lambda_Y,
                        lambda_row, lambda_col,
                        lambda_noise)
@@ -153,11 +154,10 @@ function view(bm::MatFacModel, idx1, idx2)
                        view(bm.row_transform, idx1, idx2),
                        view(bm.col_transform, idx1, idx2),
                        view(bm.noise_model, idx2),
-                       view(bm.X_reg, idx1), 
-                       view(bm.Y_reg, idx2),
-                       view(bm.row_transform_reg, idx1, idx2),
-                       view(bm.col_transform_reg, idx1, idx2),
-                       view(bm.noise_model_reg, idx2),
+                       bm.X_reg, bm.Y_reg,
+                       bm.row_transform_reg,
+                       bm.col_transform_reg,
+                       bm.noise_model_reg,
                        bm.lambda_X, 
                        bm.lambda_Y,
                        bm.lambda_row,
@@ -174,11 +174,11 @@ function Base.getindex(bm::MatFacModel, idx1, idx2)
                        Base.getindex(bm.row_transform, idx1, idx2),
                        Base.getindex(bm.col_transform, idx1, idx2),
                        Base.getindex(bm.noise_model, idx2),
-                       Base.getindex(bm.X_reg, idx1), 
-                       Base.getindex(bm.Y_reg, idx2),
-                       Base.getindex(bm.row_transform_reg, idx1, idx2),
-                       Base.getindex(bm.col_transform_reg, idx1, idx2),
-                       Base.getindex(bm.noise_model_reg, idx2),
+                       bm.X_reg, 
+                       bm.Y_reg,
+                       bm.row_transform_reg,
+                       bm.col_transform_reg,
+                       bm.noise_model_reg,
                        bm.lambda_X, 
                        bm.lambda_Y,
                        bm.lambda_row,
