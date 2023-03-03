@@ -204,7 +204,7 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
 end
 
 
-function batched_link_scale(nm, D; capacity=10^8)
+function batched_link_scale(model, D; capacity=10^8, latent_map_fn=(m,Z)->Z)
 
     M, N = size(D)
     
@@ -214,12 +214,14 @@ function batched_link_scale(nm, D; capacity=10^8)
     tozero!(D, nan_idx)
     M_vec = vec(sum(nonnan_idx, dims=1))
 
+    nm = model.noise_model
+
     # Compute column means -- after link function
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    mean_vec = vec(batched_mapreduce(d -> link(nm, d), 
+    mean_vec = vec(batched_mapreduce((m, d) -> latent_map_fn(m, link(nm, d)), 
                                      (s, Z) -> s .+ sum(Z, dims=1), 
-                                     D; start=reduce_start, capacity=capacity)
+                                     model, D; start=reduce_start, capacity=capacity)
                   ) ./ M_vec
 
     # Compute column variances via 
@@ -227,10 +229,10 @@ function batched_link_scale(nm, D; capacity=10^8)
     # (after link function)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    sumsq_vec = vec(batched_mapreduce(d -> link(nm, d).^2, 
+    sumsq_vec = vec(batched_mapreduce((m, d) -> latent_map_fn(m, link(nm, d)).^2, 
                                       (s, Z) -> s .+ sum(Z, dims=1), 
-                                      D; start=reduce_start, capacity=capacity)
-                  ) 
+                                      model, D; start=reduce_start, capacity=capacity)
+                   ) 
     meansq_vec = sumsq_vec ./ M_vec
     var_vec = meansq_vec .- (mean_vec.*mean_vec)
 
