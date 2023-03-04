@@ -406,6 +406,9 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibra
 
     nanvals = (!isfinite).(D)
     D_idx = nanround.(D)
+    
+    sort!(on.ext_thresholds)
+
     ext_thresholds = T.(on.ext_thresholds)
     l_thresh = ext_thresholds[D_idx]
     r_thresh = ext_thresholds[D_idx .+ UInt8(1)]

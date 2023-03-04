@@ -10,8 +10,8 @@ mutable struct TestStruct
     b::NamedTuple
     c::String
 end
-@functor TestStruct
-Flux.trainable(ts::TestStruct) = (a=ts.a, b=ts.b)
+@functor TestStruct (a, b)
+#Flux.trainable(ts::TestStruct) = (a=ts.a, b=ts.b)
 
 function util_tests()
 
@@ -373,7 +373,7 @@ function fit_tests()
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, print_iter=1)
+        fit!(model, composite_data; verbosity=1, lr=0.01, max_epochs=100, print_iter=1)
         
         # test whether the parameters were modified
         @test !isapprox(model.X, X_start)
@@ -396,7 +396,7 @@ function fit_tests()
 
         # test whether the fit! function can run to
         # completion (under max_epochs condition)
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, print_iter=1)
+        fit!(model, composite_data; verbosity=1, lr=0.01, max_epochs=100, print_iter=1)
         @test true
 
         # test whether the parameters were modified
@@ -441,9 +441,8 @@ function callback_tests()
         hcb = MF.HistoryCallback()
 
         # test whether the HistoryCallback records history correctly
-        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=10, callback=hcb, print_iter=1)
-        @test length(hcb.history) == 10
-
+        fit!(model, composite_data; verbosity=1, lr=0.05, max_epochs=100, callback=hcb, print_iter=1)
+        @test length(hcb.history) == 100
 
     end
 
@@ -485,8 +484,8 @@ end
 
 function main()
    
-    #util_tests() 
-    #noise_model_tests()
+    util_tests() 
+    noise_model_tests()
     model_tests()
     update_tests()
     fit_tests()

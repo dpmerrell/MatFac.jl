@@ -48,7 +48,8 @@ fmapstructure(f, t::Tuple{}) = ()
 
 
 ###################################################
-# Other arithmetic operations for gradient updates
+# Other arithmetic operations for parameters 
+# and gradients
 ###################################################
 
 function binop!(op, a::Any, b::Nothing)
@@ -68,6 +69,23 @@ function binop!(op, a::Any, b::TupleTypes)
         end
     end
 end
+
+
+tozero(x::Tuple{}) = ()
+tozero(x::Nothing) = nothing
+tozero(x) = zero(x)
+
+function zero_out!(x::TupleTypes)
+    for pname in propertynames(x)
+        v = getproperty(x, pname)
+        zero_out!(v)
+    end
+end
+
+function zero_out!(x::AbstractArray)
+    x .= 0
+end
+
 
 ####################################################
 # Extract a whole tree of trainable parameters
@@ -91,13 +109,8 @@ function rec_trainable(obj)
 end
 
 ###################################################
-# Define a custom `zero` function
+# Functions for setting parameters to zero
 ###################################################
-
-tozero(x::Tuple{}) = ()
-tozero(x::Nothing) = nothing
-tozero(x) = zero(x)
-
 
 # Define some other useful array operations.
 # CUDA.jl will compile these into efficient GPU kernels.
