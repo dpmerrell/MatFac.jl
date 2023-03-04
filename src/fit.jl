@@ -97,7 +97,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     
     # Reweight the column losses if necessary
     if scale_column_losses
-        vprint("Re-weighting column losses\n"; prefix=print_prefix)
+        vprint("Re-weighting column losses...\n"; prefix=print_prefix)
         rescale_column_losses!(model, D; verbosity=verbosity-1)
     end
 
@@ -335,11 +335,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         if loss_diff < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0, prefix=new_pref)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=1, prefix=new_pref)
         elseif loss_diff/abs(loss) < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0, prefix=new_pref)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=1, prefix=new_pref)
         else
             tol_iters = 0
             epoch += 1
@@ -347,13 +347,13 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         prev_loss = loss
 
         if tol_iters >= tol_max_iters
-            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0, prefix=new_pref)
+            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=1, prefix=new_pref)
             break
         end
 
     end
     if epoch >= max_epochs 
-        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=0, prefix=new_pref)
+        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=1, prefix=new_pref)
     end
 
     #############################
