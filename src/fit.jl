@@ -54,6 +54,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               scale_column_losses=true,
               calibrate_losses=true,
               verbosity::Integer=1,
+              print_prefix="",
               print_iter::Integer=10,
               callback=nothing,
               reg_relative_weighting=true,
@@ -64,7 +65,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               update_X_reg=true,
               update_Y_reg=true,
               update_row_layers_reg=true,
-              update_col_layers_reg=true,
+              update_col_layers_reg=true
               )
     
     #############################
@@ -72,11 +73,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     #############################
     
     # Define a verbose print
-    function vprint(a...; level=1)
+    function vprint(a...; level=1, prefix="")
         if verbosity >= level
-            print(string(a...))
+            print(string(prefix, a...))
         end
     end
+    new_pref = string(print_prefix, "    ")
 
     # Validate input size
     M_D, N_D = size(D)
@@ -95,8 +97,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     
     # Reweight the column losses if necessary
     if scale_column_losses
-        vprint("Re-weighting column losses\n")
-        rescale_column_losses!(model, D)
+        vprint("Re-weighting column losses\n"; prefix=print_prefix)
+        rescale_column_losses!(model, D; verbosity=verbosity-1)
     end
 
     # Prep the row and column transformations 
@@ -163,10 +165,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     epoch = 1
     t_start = time()
     tol_iters = 0
+    vprint("Fitting model parameters...\n"; prefix=print_prefix)
     while epoch <= max_epochs
 
         if (epoch % print_iter) == 0
-            vprint("Epoch ", epoch,":  ")
+            vprint("Epoch ", epoch,":  "; prefix=new_pref)
         end
 
         # Set losses to zero
@@ -332,11 +335,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         if loss_diff < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=0, prefix=new_pref)
         elseif loss_diff/abs(loss) < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=0, prefix=new_pref)
         else
             tol_iters = 0
             epoch += 1
@@ -344,13 +347,13 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         prev_loss = loss
 
         if tol_iters >= tol_max_iters
-            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0)
+            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=0, prefix=new_pref)
             break
         end
 
     end
     if epoch >= max_epochs 
-        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=0)
+        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=0, prefix=new_pref)
     end
 
     #############################
@@ -421,12 +424,13 @@ end
 
 # Rescale the column losses in such a way that each
 # column loss yields an X-gradient of similar magnitude
-function rescale_column_losses!(model, D; capacity::Integer=10^8)
+function rescale_column_losses!(model, D; capacity::Integer=10^8, verbosity=1, prefix="")
 
     K,N = size(model.Y)
 
     # Compute M-estimates for the columns
-    col_M_estimates = compute_M_estimates(model, D; capacity=capacity, verbosity=-1, 
+    col_M_estimates = compute_M_estimates(model, D; capacity=capacity, 
+                                                    verbosity=verbosity, print_prefix=prefix, 
                                                     lr=1.0, max_epochs=1000, rel_tol=1e-9)
     # For each column, compute the sum of squared partial derivatives
     # of loss w.r.t. the M-estimates. (This turns out to be an appropriate
