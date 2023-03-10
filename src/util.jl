@@ -275,5 +275,31 @@ function batched_data_loss(model, D::AbstractMatrix; capacity=Int(25e6))
 end
 
 
+#######################################################
+# Training history utils
+#######################################################
 
+# "hist" is a dictionary; its entries are lists.
+# With each iteration, we append values to them.
+
+function history!(nothing; kwargs...)
+    return
+end
+
+function history!(hist::AbstractDict; kwargs...)
+    for (k,v) in kwargs
+        l = get!(hist, string(k), MutableLinkedList())
+        push!(l, v)
+    end
+end
+
+function finalize_history!(hist::AbstractDict)
+    for k in keys(hist)
+        hist[k] = collect(hist[k])
+    end
+end
+
+function finalize_history!(hist::Nothing)
+    return
+end
 

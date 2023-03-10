@@ -11,7 +11,7 @@ AbstractOptimiser = Flux.Optimise.AbstractOptimiser
          opt=AdaGrad(), lr=0.01, max_epochs=1000,
          abs_tol=1e-9, rel_tol=1e-6, 
          verbosity=1, print_iter=10,
-         callback=nothing,
+         keep_history=false,
          reg_relative_weighting=true,
          update_X=true,
          update_Y=true,
@@ -32,7 +32,7 @@ Fit a MatFacModel to dataset D.
 * `verbosity`: larger values make the method print more 
   information to stdout.
 * `print_iter`: the number of iterations between printouts to stdout
-* `callback`: a function (or callable struct) called at the end of each iteration
+* `keep_history`: Bool indicating whether to record the training loss history
 * `reg_relative_weighting`: whether to reweight the regularizers 
                             s.t. they behave consistently across problem sizes
 * `update_X`: whether to update the factor X (i.e., setting to false holds X fixed)
@@ -56,7 +56,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               verbosity::Integer=1,
               print_prefix="",
               print_iter::Integer=10,
-              callback=nothing,
+              keep_history=false,
               reg_relative_weighting=true,
               update_X=true,
               update_Y=true,
@@ -73,12 +73,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     #############################
     
     # Define a verbose print
-    function vprint(a...; level=1, prefix="")
+    function vprint(a...; level=1, prefix=print_prefix)
         if verbosity >= level
             print(string(prefix, a...))
         end
     end
-    new_pref = string(print_prefix, "    ")
 
     # Validate input size
     M_D, N_D = size(D)
@@ -97,8 +96,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     
     # Reweight the column losses if necessary
     if scale_column_losses
-        vprint("Re-weighting column losses...\n"; prefix=print_prefix)
-        rescale_column_losses!(model, D; verbosity=verbosity-1)
+        vprint("Re-weighting column losses...\n")
+        rescale_column_losses!(model, D; verbosity=verbosity,
+                                         prefix=string(print_prefix, "    "))
     end
 
     # Prep the row and column transformations 
@@ -142,10 +142,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         opt = Flux.Optimise.AdaGrad(lr)
     end
 
-    # If no callback is provided, construct
-    # a do-nothing function
-    if callback == nothing
-        callback = (args...) -> nothing
+    # If required, construct an object to store
+    # training history
+    hist = nothing
+    if keep_history
+        hist = Dict() 
     end
 
     # Track the loss
@@ -165,11 +166,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     epoch = 1
     t_start = time()
     tol_iters = 0
-    vprint("Fitting model parameters...\n"; prefix=print_prefix)
+    #vprint("Fitting model parameters...\n"; prefix=print_prefix)
     while epoch <= max_epochs
 
         if (epoch % print_iter) == 0
-            vprint("Epoch ", epoch,":  "; prefix=new_pref)
+            vprint("Epoch ", epoch,":  ")
         end
 
         # Set losses to zero
@@ -319,15 +320,19 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         # to account for row-pass and col-pass)
         loss = (d_loss + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
+        elapsed = time() - t_start
 
-        # Execute the callback (may or may not mutate the model)
-        callback(model, epoch, d_loss, X_reg_loss, Y_reg_loss,
-                               row_layer_reg_loss, col_layer_reg_loss)
+        history!(hist; data_loss=d_loss, 
+                       row_layer_reg_loss=row_layer_reg_loss,
+                       col_layer_reg_loss=col_layer_reg_loss,
+                       X_reg_loss=X_reg_loss,
+                       Y_reg_loss=Y_reg_loss,
+                       total_loss=loss,
+                       elapsed_time=elapsed)
 
         # Report the loss
         if (epoch % print_iter) == 0
-            elapsed = time() - t_start
-            vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n")
+            vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n"; prefix="")
         end
 
         # Check termination conditions
@@ -335,11 +340,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         if loss_diff < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=1, prefix=new_pref)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=1)
         elseif loss_diff/abs(loss) < abs_tol
             tol_iters += 1
             epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=1, prefix=new_pref)
+            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=1)
         else
             tol_iters = 0
             epoch += 1
@@ -347,20 +352,21 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         prev_loss = loss
 
         if tol_iters >= tol_max_iters
-            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=1, prefix=new_pref)
+            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=1)
             break
         end
 
     end
     if epoch >= max_epochs 
-        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=1, prefix=new_pref)
+        vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=1)
     end
 
     #############################
     # Termination
     #############################
+    finalize_history!(hist)
 
-    return model
+    return hist
 end
 
 
@@ -431,7 +437,7 @@ function rescale_column_losses!(model, D; capacity::Integer=10^8, verbosity=1, p
     # Compute M-estimates for the columns
     col_M_estimates = compute_M_estimates(model, D; capacity=capacity, 
                                                     verbosity=verbosity, print_prefix=prefix, 
-                                                    lr=1.0, max_epochs=1000, rel_tol=1e-9)
+                                                    lr=0.25, max_epochs=1000, rel_tol=1e-9)
     # For each column, compute the sum of squared partial derivatives
     # of loss w.r.t. the M-estimates. (This turns out to be an appropriate
     # scaling factor.)
