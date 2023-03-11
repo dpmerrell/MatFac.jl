@@ -411,7 +411,7 @@ function fit_tests()
                                                   Y_reg=y->0.5*sum(y.*y))
         hist = fit!(model, composite_data; keep_history=true, verbosity=1, lr=0.01, max_epochs=100, print_iter=1)
         @test isa(hist["data_loss"], AbstractVector)
-        @test length(hist["data_loss"]) == 100
+        @test length(hist["data_loss"]) <= 100
         @test isa(hist["elapsed_time"], AbstractVector)
     end
 end

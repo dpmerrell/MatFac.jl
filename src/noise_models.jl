@@ -19,7 +19,7 @@ end
 
 # link
 function link(::NormalNoise, A::AbstractMatrix)
-    return A
+    return copy(A)
 end
 
 # inverse link
@@ -67,6 +67,7 @@ end
 function Base.getindex(nn::NormalNoise, idx)
     return NormalNoise(Base.getindex(nn.weight, idx))
 end
+
 
 function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8)
     return batched_link_scale(nn, D; capacity=capacity) 
@@ -358,22 +359,33 @@ end
 
 nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
 
+function idx_kernel(i::T where T <: Integer, v::AbstractVector{U} where U <: Real) 
+    return v[i]
+end
+
 # link function
 
 function link(on::OrdinalNoise, D)
-    thresholds_cpu = cpu(on.thresholds)
+
+    println("SOMETHING WEIRD IN D?")
+    println(unique(D))
+    nan_idx = (!isfinite).(D)
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
 
     sort!(on.ext_thresholds)
-    l_thresh = on.ext_thresholds[D_idx]
-    r_thresh = on.ext_thresholds[R_idx]
+    l_thresh = map(i->idx_kernel(i, on.ext_thresholds), D_idx)
+    r_thresh = map(i->idx_kernel(i, on.ext_thresholds), R_idx)
 
+    thresholds_cpu = cpu(on.ext_thresholds)
+    T = eltype(on.ext_thresholds)
     th_max = T(thresholds_cpu[end-1] + 1)
     th_min = T(thresholds_cpu[2] - 1)
     map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
     map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
     centers = (r_thresh .+ l_thresh).*T(0.5)
+
+    tonan!(centers, nan_idx)
     return centers
 end
 

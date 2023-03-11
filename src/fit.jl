@@ -374,8 +374,9 @@ end
 # Rescaling column losses
 ############################################################
 
+
 # Compute M-estimates of columns
-function compute_M_estimates(model, D; kwargs...)
+function compute_M_estimates(model, D; capacity=10^8, keep_history=false, kwargs...)
 
     K, M = size(model.X)
     N = size(model.Y, 2)
@@ -384,21 +385,32 @@ function compute_M_estimates(model, D; kwargs...)
     model_copy.X = similar(model.X, (1,M))
     model_copy.X .= 1
     model_copy.Y = similar(model.Y, (1,N))
-    model_copy.Y .= 0 
 
+    # Initialize the M-estimates at the *means*
+    # of the columns, after applying the link functions
+    model_copy.Y[1,:] .= batched_link_mean(model, D; capacity=capacity)
     model_copy.Y_reg = (x -> 0.0)
+    
+    model_copy.col_transform = (x -> x)
+    model_copy.row_transform = (x -> x)
 
-    fit!(model_copy, D; scale_column_losses=false, 
-                        update_X=false, 
-                        update_row_layers=false,
-                        update_col_layers=false,
-                        update_X_reg=false,
-                        update_Y_reg=false,
-                        update_row_layers_reg=false,
-                        update_col_layers_reg=false,
-                        kwargs...)
+    h = fit!(model_copy, D; scale_column_losses=false, 
+                            update_X=false, 
+                            update_Y=true, 
+                            update_row_layers=false,
+                            update_col_layers=false,
+                            update_X_reg=false,
+                            update_Y_reg=false,
+                            update_row_layers_reg=false,
+                            update_col_layers_reg=false,
+                            keep_history=keep_history,
+                            kwargs...)
 
-    return model_copy.Y
+    if keep_history 
+        return model_copy.Y, h
+    else
+        return model_copy.Y
+    end
 end
 
 # Compute columns' sum-squared-gradients of loss

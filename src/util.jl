@@ -217,40 +217,49 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
 end
 
 
-function batched_link_scale(model, D; capacity=10^8, latent_map_fn=(m,Z)->Z)
+function batched_link_mean(model, D; capacity=10^8, latent_map_func=(m,l)->l)
 
     M, N = size(D)
-    
-    # Replace NaNs with zeros
-    nan_idx = isnan.(D)
-    nonnan_idx = (!).(nan_idx)
-    tozero!(D, nan_idx)
+
+    nonnan_idx = isfinite.(D)
+    nan_idx = (!).(nonnan_idx) 
     M_vec = vec(sum(nonnan_idx, dims=1))
 
     nm = model.noise_model
 
-    # Compute column means -- after link function
+    # Apply the link function to the data;
+    # then, optionally, apply a function of 
+    # the data *and* the model. Finally,
+    # set the nonfinite entries to zero.
+    function map_func(m, d, ni)
+        l = latent_map_func(m, link(nm, d))
+        tozero!(l, ni)
+        return l
+    end
+
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    mean_vec = vec(batched_mapreduce((m, d) -> latent_map_fn(m, link(nm, d)), 
-                                     (s, Z) -> s .+ sum(Z, dims=1), 
-                                     model, D; start=reduce_start, capacity=capacity)
-                  ) ./ M_vec
+    mean_vec = vec(batched_mapreduce(map_func,
+                                     (s,Z) -> s .+ sum(Z, dims=1),
+                                     model, D, nan_idx; start=reduce_start, capacity=capacity)
+                  ) ./M_vec
 
+    return mean_vec
+end
+
+
+function batched_link_scale(model, D; capacity=10^8, latent_map_fn=(m,l)->l)
+
+    mean_vec = batched_link_mean(model, D; capacity=capacity, latent_map_fn=latent_map_fn)
+    M, N = size(D)
+   
+    map_func = (m,l) -> latent_map_fn(m,l).^2
+    meansq_vec = batched_link_mean(model, D; capacity=capacity, latent_map_fn=map_func)
+    
     # Compute column variances via 
     # V[x] = E[x^2] - E[x]^2
     # (after link function)
-    reduce_start = similar(D, 1, N)
-    reduce_start .= 0
-    sumsq_vec = vec(batched_mapreduce((m, d) -> latent_map_fn(m, link(nm, d)).^2, 
-                                      (s, Z) -> s .+ sum(Z, dims=1), 
-                                      model, D; start=reduce_start, capacity=capacity)
-                   ) 
-    meansq_vec = sumsq_vec ./ M_vec
     var_vec = meansq_vec .- (mean_vec.*mean_vec)
-
-    # Restore NaN values
-    tonan!(D, nan_idx)
 
     return sqrt.(var_vec)
 end
