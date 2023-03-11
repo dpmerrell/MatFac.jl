@@ -376,7 +376,7 @@ end
 
 
 # Compute M-estimates of columns
-function compute_M_estimates(model, D; capacity=10^8, keep_history=false, kwargs...)
+function compute_M_estimates(model::MatFacModel, D::AbstractMatrix; capacity=10^8, keep_history=false, kwargs...)
 
     K, M = size(model.X)
     N = size(model.Y, 2)
@@ -388,7 +388,7 @@ function compute_M_estimates(model, D; capacity=10^8, keep_history=false, kwargs
 
     # Initialize the M-estimates at the *means*
     # of the columns, after applying the link functions
-    model_copy.Y[1,:] .= batched_link_mean(model, D; capacity=capacity)
+    model_copy.Y[1,:] .= batched_link_mean(model.noise_model, D; capacity=capacity)
     model_copy.Y_reg = (x -> 0.0)
     
     model_copy.col_transform = (x -> x)
@@ -406,6 +406,8 @@ function compute_M_estimates(model, D; capacity=10^8, keep_history=false, kwargs
                             keep_history=keep_history,
                             kwargs...)
 
+    nan_idx = (!isfinite).(model_copy.Y)
+    model_copy.Y[nan_idx] .= 0
     if keep_history 
         return model_copy.Y, h
     else

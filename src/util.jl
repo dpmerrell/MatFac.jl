@@ -182,6 +182,9 @@ function column_means(D::AbstractMatrix)
     tozero!(mean_vec, mean_nan_idx)
     tonan!(D, nan_idx)
 
+    nan_mean_idx = isnan.(mean_vec)
+    mean_vec[nan_mean_idx] .= 0
+
     return mean_vec
 end
 
@@ -217,7 +220,7 @@ function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
 end
 
 
-function batched_link_mean(model, D; capacity=10^8, latent_map_func=(m,l)->l)
+function batched_link_mean(noise_model, D; capacity=10^8, latent_map_fn=l->l)
 
     M, N = size(D)
 
@@ -225,15 +228,13 @@ function batched_link_mean(model, D; capacity=10^8, latent_map_func=(m,l)->l)
     nan_idx = (!).(nonnan_idx) 
     M_vec = vec(sum(nonnan_idx, dims=1))
 
-    nm = model.noise_model
-
     # Apply the link function to the data;
-    # then, optionally, apply a function of 
-    # the data *and* the model. Finally,
-    # set the nonfinite entries to zero.
-    function map_func(m, d, ni)
-        l = latent_map_func(m, link(nm, d))
-        tozero!(l, ni)
+    # then, optionally, apply another function
+    # to the latent representation. 
+    # Set the nonfinite entries to zero.
+    function map_func(d)
+        l = latent_map_fn(link(noise_model, d))
+        l[(!isfinite).(l)] .= 0
         return l
     end
 
@@ -241,26 +242,24 @@ function batched_link_mean(model, D; capacity=10^8, latent_map_func=(m,l)->l)
     reduce_start .= 0
     mean_vec = vec(batched_mapreduce(map_func,
                                      (s,Z) -> s .+ sum(Z, dims=1),
-                                     model, D, nan_idx; start=reduce_start, capacity=capacity)
+                                     D; start=reduce_start, capacity=capacity)
                   ) ./M_vec
-
     return mean_vec
 end
 
 
-function batched_link_scale(model, D; capacity=10^8, latent_map_fn=(m,l)->l)
+function batched_link_scale(noise_model, D; capacity=10^8, latent_map_fn=l->l)
 
-    mean_vec = batched_link_mean(model, D; capacity=capacity, latent_map_fn=latent_map_fn)
+    mean_vec = batched_link_mean(noise_model, D; capacity=capacity, latent_map_fn=latent_map_fn)
     M, N = size(D)
    
-    map_func = (m,l) -> latent_map_fn(m,l).^2
-    meansq_vec = batched_link_mean(model, D; capacity=capacity, latent_map_fn=map_func)
+    map_func = l -> latent_map_fn(l).^2
+    meansq_vec = batched_link_mean(noise_model, D; capacity=capacity, latent_map_fn=map_func)
     
     # Compute column variances via 
     # V[x] = E[x^2] - E[x]^2
     # (after link function)
     var_vec = meansq_vec .- (mean_vec.*mean_vec)
-
     return sqrt.(var_vec)
 end
 

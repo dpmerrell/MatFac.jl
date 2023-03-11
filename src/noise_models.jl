@@ -69,8 +69,8 @@ function Base.getindex(nn::NormalNoise, idx)
 end
 
 
-function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8)
-    return batched_link_scale(nn, D; capacity=capacity) 
+function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_scale(nn, D; capacity=capacity, kwargs...) 
 end
 
 
@@ -209,12 +209,12 @@ function Base.getindex(bn::BernoulliNoise, idx)
     return BernoulliNoise(Base.getindex(bn.weight, idx))
 end
 
-function link_scale(bn::BernoulliNoise, D::AbstractMatrix; capacity=10^8)
+function link_scale(bn::BernoulliNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
     N = size(D,2)
-    p_vec = cpu(column_means(D; capacity=capacity))
+    p_vec = cpu(column_means(D))
     mu_vec = logit(p_vec)
     scale_vec = similar(D, N)
-    scale_vec .= mu_vec / quantile(Normal(), 1 .- p_vec)
+    scale_vec .= mu_vec ./ quantile(Normal(), p_vec)
     return scale_vec
 end
 
@@ -324,8 +324,8 @@ end
 poisson_sample(z) = rand(Poisson(z))
 
 
-function link_scale(pn::PoissonNoise, D::AbstractMatrix; capacity=10^8)
-    return batched_link_scale(pn, D; capacity=capacity)
+function link_scale(pn::PoissonNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_scale(pn, D; capacity=capacity, kwargs...)
 end
 
 
@@ -367,8 +367,6 @@ end
 
 function link(on::OrdinalNoise, D)
 
-    println("SOMETHING WEIRD IN D?")
-    println(unique(D))
     nan_idx = (!isfinite).(D)
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
@@ -410,6 +408,7 @@ function ordinal_calibration(l_thresh::AbstractMatrix{T},
     map!( th -> (isfinite(th) ? th : th_max), r_thresh, r_thresh)
     map!( th -> (isfinite(th) ? th : th_min), l_thresh, l_thresh)
     centers = (r_thresh .+ l_thresh).*T(0.5)
+
     return map(ordinal_loss_kernel, centers, l_thresh, r_thresh)
 end
 
@@ -449,6 +448,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
     nanvals = (!isfinite).(D)
 
     sort!(on.ext_thresholds)
+
     ext_thresholds = T.(on.ext_thresholds) 
     l_thresh = ext_thresholds[D_idx]
     r_thresh = ext_thresholds[R_idx]
@@ -484,7 +484,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
         on_bar = Tangent{OrdinalNoise}(ext_thresholds=U(on_bar))
         Z_bar = loss_bar .* (1 .- sig_r .- sig_l) 
         Z_bar .*= transpose(on.weight)
-  
+ 
         return ChainRulesCore.NoTangent(), 
                on_bar, 
                Z_bar, 
@@ -496,7 +496,7 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
         l .-= ordinal_calibration(l_thresh, r_thresh, ext_thresholds)
     end
     l .*= transpose(on.weight)
-    
+
     return l, loss_ordinal_pullback
 end
 
@@ -513,8 +513,8 @@ function Base.getindex(on::OrdinalNoise, idx)
     return OrdinalNoise(Base.getindex(on.weight, idx), copy(on.ext_thresholds))
 end
 
-function link_scale(ord::OrdinalNoise, D::AbstractMatrix; capacity=10^8)
-    return batched_link_scale(ord, D; capacity=capacity)
+function link_scale(ord::OrdinalNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_scale(ord, D; capacity=capacity, kwargs...)
 end
 
 #########################################################
