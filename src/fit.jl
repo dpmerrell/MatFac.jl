@@ -153,6 +153,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     end
 
     # Track the loss
+    best_loss = Inf
     prev_loss = Inf
     loss = Inf
 
@@ -352,25 +353,31 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                        Y_reg_loss=Y_reg_loss,
                        total_loss=loss,
                        elapsed_time=elapsed)
-
+        
         # Report the loss
         if (epoch % print_iter) == 0
             vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n"; prefix="")
         end
 
         # Check termination conditions
-        loss_diff = prev_loss - loss 
-        if loss_diff < abs_tol
-            tol_iters += 1
-            epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=1)
-        elseif loss_diff/abs(loss) < abs_tol
-            tol_iters += 1
-            epoch += 1
-            vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=1)
-        else
-            tol_iters = 0
-            epoch += 1
+        loss_diff = prev_loss - loss
+        epoch += 1 
+        if loss < best_loss # We've improved on the best loss!
+            best_loss = loss
+            if loss_diff < abs_tol
+                tol_iters += 1
+                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol<",abs_tol, "\n"; level=1)
+            elseif loss_diff/abs(loss) < abs_tol
+                tol_iters += 1
+                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol<",rel_tol, "\n"; level=1)
+            else
+                tol_iters = 0
+            end
+        else # Loss is higher than the best loss!
+            if loss_diff < 0 # Loss is increase! 
+                tol_iters += 1
+                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase\n"; level=1)
+            end
         end
         prev_loss = loss
 
