@@ -70,6 +70,12 @@ function binop!(op, a::Any, b::TupleTypes)
     end
 end
 
+# Accumulate the sum of `collection` in its first entry. 
+function accumulate_sum!(collection)
+    for i=2:length(collection)
+        binop!(.+, collection[1], collection[i])
+    end 
+end
 
 tozero(x::Tuple{}) = ()
 tozero(x::Nothing) = nothing

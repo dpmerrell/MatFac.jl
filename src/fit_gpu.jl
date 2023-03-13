@@ -1,51 +1,10 @@
 
 
-import StatsBase: fit!
+##########################################################################
+# GPU-COMPATIBLE VERSION OF `fit!`
+##########################################################################
 
-AbstractOptimiser = Flux.Optimise.AbstractOptimiser
-
-
-"""
-    fit!(model::MatFacModel, D::AbstractMatrix;
-         scale_columns=true, capacity=10^8, 
-         opt=AdaGrad(), lr=0.01, max_epochs=1000,
-         abs_tol=1e-9, rel_tol=1e-6, 
-         verbosity=1, print_iter=10,
-         keep_history=false,
-         reg_relative_weighting=true,
-         update_X=true,
-         update_Y=true,
-         update_layers=true)
-
-Fit a MatFacModel to dataset D. 
-
-* If `scale_column_losses` is `true`, then we weight each
-  column's loss by the inverse of its variance.
-* `capacity` refers to memory capacity. It controls
-  the size of minibatches during training. I.e., larger
-  `capacity` means larger minibatches.
-* `opt` is an optional Flux `AbstractOptimiser` object.
-  Overrides the `lr` kwarg.
-* `lr` is learning rate. Default 0.01.
-* `abs_tol` and `rel_tol` are standard convergence criteria.
-* `max_epochs`: an upper bound on the number of epochs.
-* `verbosity`: larger values make the method print more 
-  information to stdout.
-* `print_iter`: the number of iterations between printouts to stdout
-* `keep_history`: Bool indicating whether to record the training loss history
-* `reg_relative_weighting`: whether to reweight the regularizers 
-                            s.t. they behave consistently across problem sizes
-* `update_X`: whether to update the factor X (i.e., setting to false holds X fixed)
-* `update_Y`: whether to update the factor Y (i.e., setting to false holds Y fixed)
-* `update_layers`: whether to update the layer parameters
-
-We recommend loading `model` and `D` to GPU _before_ fitting:
-```
-model = gpu(model)
-D = gpu(D)
-```
-"""
-function fit!(model::MatFacModel, D::AbstractMatrix;
+function fit!(model::MatFacModel, D::CuMatrix;
               capacity::Integer=10^8, 
               max_epochs=1000, lr::Number=0.01,
               opt::Union{Nothing,AbstractOptimiser}=nothing,
@@ -65,7 +24,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
               update_X_reg=true,
               update_Y_reg=true,
               update_row_layers_reg=true,
-              update_col_layers_reg=true,
+              update_col_layers_reg=true
               t_start=nothing
               )
     
@@ -92,10 +51,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
              )
     end
 
-    nthread = Threads.nthreads()
-    capacity = min(capacity, M_D*N_D)
-    col_batch_size = max(div(capacity,(M*nthread)),1)
-    row_batch_size = max(div(capacity,(N*nthread)),1)
+    col_batch_size = div(capacity,M)
+    row_batch_size = div(capacity,N)
     
     # Reweight the column losses if necessary
     if scale_column_losses
@@ -157,15 +114,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     loss = Inf
 
     # Define objects to hold gradients
-    X_grads = [zero(model.X) for _=1:nthread]
-    Y_grads = [zero(model.Y) for _=1:nthread]
-    row_layer_grads = [deepcopy(rec_trainable(model.row_transform)) for _=1:nthread]
-    col_layer_grads = [deepcopy(rec_trainable(model.col_transform)) for _=1:nthread]
-    noise_model_grads = [deepcopy(rec_trainable(model.noise_model)) for _=1:nthread]
-
-    # Define the row and column batchese
-    row_batches = batch_iterations(M, row_batch_size)
-    col_batches = batch_iterations(N, col_batch_size)
+    X_grad = zero(model.X)
+    Y_grad = zero(model.Y)
+    row_layer_grad = deepcopy(rec_trainable(model.row_transform))
+    col_layer_grad = deepcopy(rec_trainable(model.col_transform))
+    noise_model_grad = deepcopy(rec_trainable(model.noise_model))
 
     #############################
     # Main loop 
@@ -175,8 +128,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         t_start = time()
     end
     tol_iters = 0
-    d_loss = zeros(nthread)
-    
+    #vprint("Fitting model parameters...\n"; prefix=print_prefix)
     while epoch <= max_epochs
 
         if (epoch % print_iter) == 0
@@ -185,24 +137,19 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
         # Set losses to zero
         loss = 0.0
-        d_loss .= 0
-        d_loss_total = 0.0
+        d_loss = 0.0
 
         # Set gradients to zero
-        for n=1:nthread 
-            zero_out!(X_grads[n]) 
-            zero_out!(Y_grads[n])
-            zero_out!(row_layer_grads[n])
-            zero_out!(col_layer_grads[n])
-            zero_out!(noise_model_grads[n])
-        end
+        zero_out!(X_grad) 
+        zero_out!(Y_grad)
+        zero_out!(row_layer_grad)
+        zero_out!(col_layer_grad)
+        zero_out!(noise_model_grad)
 
         ######################################
         # Iterate through the ROWS of data
         if (update_Y | update_col_layers)
-            
-            Threads.@threads :static for row_batch in row_batches # enumerate(BatchIter(M, row_batch_size))
-                th = Threads.threadid()
+            for row_batch in BatchIter(M, row_batch_size)
 
                 X_view = view(model.X, :, row_batch)
                 D_v = view(D, row_batch, :)
@@ -223,16 +170,16 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                 # Update the data loss *only* if we won't
                 # iterate in the other direction.
                 if !(update_X | update_row_layers)
-                    d_loss[th] += batch_loss
+                    d_loss += batch_loss
                 end
 
                 # Accumulate gradients
                 if update_Y
-                    binop!(.+, Y_grads[th], grads[1])
+                    binop!(.+, Y_grad, grads[1])
                 end
                 if update_col_layers
-                    binop!(.+, col_layer_grads[th], grads[2])
-                    binop!(.+, noise_model_grads[th], grads[3])
+                    binop!(.+, col_layer_grad, grads[2])
+                    binop!(.+, noise_model_grad, grads[3])
                 end
             end
         end
@@ -242,11 +189,10 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             Y_reg_loss, Y_reg_grad = Zygote.withgradient(Y_regularizer, model.Y, model.Y_reg)
             if update_Y
                 # Add Y's regularizer gradient
-                binop!(.+, Y_grads[1], Y_reg_grad[1])
- 
+                binop!(.+, Y_grad, Y_reg_grad[1])
+                
                 # Update Y with the accumulated gradient
-                accumulate_sum!(Y_grads)
-                update!(opt, model.Y, Y_grads[1])
+                update!(opt, model.Y, Y_grad)
             end
             if update_Y_reg
                 # Update the Y regularizer
@@ -260,13 +206,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             if update_col_layers
                 # Accumulate column layers' regularizer gradients.
                 # Then update the column layers with the accumulated gradient 
-                binop!(.+, col_layer_grads[1], reg_grads[1])
-                accumulate_sum!(col_layer_grads)
-                update!(opt, model.col_transform, col_layer_grads[1])
+                binop!(.+, col_layer_grad, reg_grads[1])
+                update!(opt, model.col_transform, col_layer_grad)
                 
                 # Update the noise model
-                accumulate_sum!(noise_model_grads)
-                update!(opt, model.noise_model, noise_model_grads[1])
+                update!(opt, model.noise_model, noise_model_grad)
             end
             if update_col_layers_reg
                 # Update column layer regularizer's parameters
@@ -277,10 +221,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         ######################################
         # Iterate through the COLUMNS of data
         if (update_X | update_row_layers)
-            Threads.@threads :static for col_batch in col_batches # BatchIter(N, col_batch_size)
+            for col_batch in BatchIter(N, col_batch_size)
                
-                th = Threads.threadid()
-
                 # Define batch views of data and model parameters 
                 D_v = view(D, :, col_batch)
                 noise_view = view(model.noise_model, col_batch)
@@ -294,14 +236,14 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                                                        noise_view, D_v)
                 # Compute loss and gradients
                 batchloss, g = Zygote.withgradient(row_likelihood, model.X, row_layers_view)
-                d_loss[th] += batchloss
+                d_loss += batchloss
 
                 # Accumulate gradients
                 if update_X
-                    binop!(.+, X_grads[th], g[1])
+                    binop!(.+, X_grad, g[1])
                 end
                 if update_row_layers
-                    binop!(.+, row_layer_grads[th], g[2]) 
+                    binop!(.+, row_layer_grad, g[2]) 
                 end
             end
         end
@@ -311,10 +253,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         if (update_X | update_X_reg)
             X_reg_loss, X_reg_grads = Zygote.withgradient(X_regularizer, model.X, model.X_reg)
             if update_X
-                binop!(.+, X_grads[1], X_reg_grads[1])
-       
-                accumulate_sum!(X_grads) 
-                update!(opt, model.X, X_grads[1])
+                binop!(.+, X_grad, X_reg_grads[1])
+        
+                update!(opt, model.X, X_grad)
             end
             if update_X_reg
                 # Update the X regularizer
@@ -327,10 +268,9 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
             row_layer_reg_loss, reg_grads = Zygote.withgradient(row_layer_regularizer, row_layers, row_layer_regs)
             if update_row_layers
                 # Update the row layers via regularizer gradients
-                binop!(.+, row_layer_grads[1], reg_grads[1])
+                binop!(.+, row_layer_grad, reg_grads[1])
 
-                accumulate_sum!(row_layer_grads)
-                update!(opt, row_layers, row_layer_grads[1])
+                update!(opt, row_layers, row_layer_grad)
             end
             if update_row_layers_reg
                 # Update the row layer regularizer's parameters
@@ -340,12 +280,11 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
         # Sum the loss components (halve the data loss
         # to account for row-pass and col-pass)
-        d_loss_total = sum(d_loss)
-        loss = (d_loss_total + row_layer_reg_loss 
+        loss = (d_loss + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
         elapsed = time() - t_start
-        
-        history!(hist; data_loss=d_loss_total, 
+
+        history!(hist; data_loss=d_loss, 
                        row_layer_reg_loss=row_layer_reg_loss,
                        col_layer_reg_loss=col_layer_reg_loss,
                        X_reg_loss=X_reg_loss,
@@ -391,102 +330,3 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
 
     return hist
 end
-
-
-############################################################
-# Rescaling column losses
-############################################################
-
-
-# Compute M-estimates of columns
-function compute_M_estimates(model::MatFacModel, D::AbstractMatrix; capacity=10^8, keep_history=false, kwargs...)
-
-    K, M = size(model.X)
-    N = size(model.Y, 2)
-
-    model_copy = deepcopy(model)
-    model_copy.X = similar(model.X, (1,M))
-    model_copy.X .= 1
-    model_copy.Y = similar(model.Y, (1,N))
-
-    # Initialize the M-estimates at the *means*
-    # of the columns, after applying the link functions
-    model_copy.Y[1,:] .= batched_link_mean(model.noise_model, D; capacity=capacity)
-    model_copy.Y_reg = (x -> 0.0)
-    
-    model_copy.col_transform = (x -> x)
-    model_copy.row_transform = (x -> x)
-
-    h = fit!(model_copy, D; scale_column_losses=false, 
-                            update_X=false, 
-                            update_Y=true, 
-                            update_row_layers=false,
-                            update_col_layers=false,
-                            update_X_reg=false,
-                            update_Y_reg=false,
-                            update_row_layers_reg=false,
-                            update_col_layers_reg=false,
-                            keep_history=keep_history,
-                            kwargs...)
-
-    nan_idx = (!isfinite).(model_copy.Y)
-    model_copy.Y[nan_idx] .= 0
-    if keep_history 
-        return model_copy.Y, h
-    else
-        return model_copy.Y
-    end
-end
-
-# Compute columns' sum-squared-gradients of loss
-# w.r.t. given M-estimates.
-function column_ssq_grads(model, D, m_row)
-
-    m_mat = repeat(m_row, size(D,1), 1)
-    grads = Zygote.gradient(Z -> invlinkloss(model.noise_model, 
-                                     model.col_transform(
-                                         model.row_transform(Z
-                                         )
-                                     ),
-                                 D; calibrate=false), m_mat
-                            )[1]
-    return sum(grads .* grads; dims=1)
-end 
-
-
-function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=10^8)
-    N = size(D, 2)
-    reduce_start = similar(D, (1,N))
-    reduce_start .= 0
-    ssq_grads = batched_mapreduce((mod, D) -> column_ssq_grads(mod, D, col_M_estimates),
-                                  (x, y) -> x .+ y,
-                                  model, D; start=reduce_start, capacity=capacity)
-    return ssq_grads
-end
-
-
-# Rescale the column losses in such a way that each
-# column loss yields an X-gradient of similar magnitude
-function rescale_column_losses!(model, D; capacity::Integer=10^8, verbosity=1, prefix="")
-
-    K,N = size(model.Y)
-
-    # Compute M-estimates for the columns
-    col_M_estimates = compute_M_estimates(model, D; capacity=capacity, 
-                                                    verbosity=verbosity, print_prefix=prefix, 
-                                                    lr=0.25, max_epochs=1000, rel_tol=1e-9)
-    # For each column, compute the sum of squared partial derivatives
-    # of loss w.r.t. the M-estimates. (This turns out to be an appropriate
-    # scaling factor.)
-    ssq_grads = vec(batched_column_ssq_grads(model, col_M_estimates, D; capacity=capacity))
-
-    M = column_nonnan(D)
-    weights = sqrt.(M ./ ssq_grads)
-    weights[ (!isfinite).(weights) ] .= 1
-    weights = map(x -> max(x, 1e-2), weights)
-    weights = map(x -> min(x, 10.0), weights)
-    set_weight!(model.noise_model, vec(weights))
-
-end
-
-
