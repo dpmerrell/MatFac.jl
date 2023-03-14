@@ -401,11 +401,10 @@ end
 
 
 ############################################################
-# Rescaling column losses
+# Compute M-estimates of columns
 ############################################################
 
 
-# Compute M-estimates of columns
 function compute_M_estimates(model::MatFacModel, D::AbstractMatrix; capacity=10^8, keep_history=false, kwargs...)
 
     K, M = size(model.X)
@@ -445,6 +444,52 @@ function compute_M_estimates(model::MatFacModel, D::AbstractMatrix; capacity=10^
     end
 end
 
+
+##############################################################
+# Means and variances of loss
+##############################################################
+
+function column_loss(model::MatFacModel, D::AbstractMatrix)
+    Z = model()
+    L = loss(model.noise_model, Z, D)
+    return L 
+end
+
+
+function batched_column_loss_sum(model::MatFacModel, D::AbstractMatrix; capacity=10^8, map_func=x->x)
+    N = size(D,1)
+    loss_start = similar(D, (1,N))
+    loss_start .= 0
+
+    total_loss = batched_mapreduce((m,d) -> map_func(column_loss_sum(m,d)),
+                                   (s,L) -> s .+ sum(L, dims=1),
+                                   model, D;
+                                   start=loss_start,
+                                   capacity=capacity)
+    return total_loss
+end
+
+
+function batched_column_ssq_loss(model::MatFacModel, D::AbstractMatrix; capacity=10^8)
+    return batched_column_loss_sum(model, D; capacity=capacity, map_func=x->x.*x)
+end
+
+
+function batched_column_loss_var(model::MatFacModel, D::AbstractMatrix; capacity=10^8)
+    total_loss = batched_column_loss_sum(model, D; capacity=capacity)
+    total_ssq_loss = batched_column_ssq_loss(model, D; capacity=capacity)
+    M_vec = column_nonnan(D)
+    mean_loss = vec(total_loss) ./ M_vec
+    mean_ssq_loss = vec(total_ssq_loss) ./ M_vec
+
+    mean_loss .*= mean_loss
+    return mean_ssq_loss .- mean_loss
+end
+
+
+##############################################################
+# Sums of squared gradients
+##############################################################
 # Compute columns' sum-squared-gradients of loss
 # w.r.t. given M-estimates.
 function column_ssq_grads(model, D, m_row)
@@ -460,6 +505,16 @@ function column_ssq_grads(model, D, m_row)
     return sum(grads .* grads; dims=1)
 end 
 
+function column_ssq_grads(model, D)
+
+    Z = model.col_trans(
+            model.row_trans(
+                transpose(model.X)*model.Y
+                   )
+               )
+    grads = Zygote.gradient(A->invlinkloss(model.noise_model, A, D), Z)[1]
+    return sum(grads .* grads; dims=1)
+end
 
 function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=10^8)
     N = size(D, 2)
@@ -471,6 +526,19 @@ function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=1
     return ssq_grads
 end
 
+function batched_column_ssq_grads(model, D; capacity::Integer=10^8, map_func=x->x)
+    N = size(D, 2)
+    reduce_start = similar(D, (1,N))
+    reduce_start .= 0
+    ssq_grads = batched_mapreduce((mod, D) -> map_func(column_ssq_grads(mod, D)),
+                                  (x, y) -> x .+ y,
+                                  model, D; start=reduce_start, capacity=capacity)
+    return ssq_grads
+end
+
+#####################################################
+# Loss rescaling
+#####################################################
 
 # Rescale the column losses in such a way that each
 # column loss yields an X-gradient of similar magnitude
