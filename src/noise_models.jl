@@ -333,7 +333,6 @@ end
 # Ordinal noise model
 #########################################################
 
-# Inverse link function
 
 mutable struct OrdinalNoise
     weight::AbstractVector
@@ -363,6 +362,7 @@ function idx_kernel(i::T where T <: Integer, v::AbstractVector{U} where U <: Rea
     return v[i]
 end
 
+
 # link function
 
 function link(on::OrdinalNoise, D)
@@ -387,11 +387,70 @@ function link(on::OrdinalNoise, D)
     return centers
 end
 
-# inverse link function 
 
+# inverse link function (**WARNING: costly!** we practically never use this) 
 function invlink(on::OrdinalNoise, A)
-    return A
+
+    K = length(on.ext_thresholds) - 1
+    l_thresh = on.ext_thresholds[1:K]
+    l_thresh = reshape(l_thresh, (1,1,K)) 
+    r_thresh = on.ext_thresholds[2:end]
+    r_thresh = reshape(r_thresh, (1,1,K)) 
+
+    # Have to allocate a 3D array!
+    sig = similar(A, (size(A)..., K))
+    sig .= sigmoid(A .- r_thresh) .- sigmoid(A .- l_thresh)
+
+    return sig  
 end
+
+
+function ChainRulesCore.rrule(invlink, on::OrdinalNoise, A)
+    
+    K = length(on.ext_thresholds) - 1
+    l_thresh = on.ext_thresholds[1:K]
+    l_thresh = reshape(l_thresh, (1,1,K)) 
+    r_thresh = on.ext_thresholds[2:end]
+    r_thresh = reshape(r_thresh, (1,1,K)) 
+
+    # Have to allocate 3D arrays!
+    sig_l = similar(A, (size(A)..., K)) 
+    sig_l .= sigmoid(A .- l_thresh) 
+    sig_r = similar(A, (size(A)..., K))
+    sig_r .= sigmoid(A .- r_thresh) 
+
+    function ordinal_invlink_pullback(result_bar)
+        A_bar = sig_r.*(1 .- sig_r)
+        A_bar .-= sig_l.*(1 .- sig_l)
+        A_bar .*= result_bar 
+        A_bar = sum(A_bar, dims=3)[:,:,1]
+
+        return NoTangent(), NoTangent(), A_bar
+    end
+
+    result = sig_l .- sig_r
+
+    return result, ordinal_invlink_pullback
+end
+
+
+function loss(on::OrdinalNoise, Z::AbstractArray, D::AbstractMatrix)
+ 
+    K = length(on.ext_thresholds) - 1
+ 
+    nan_idx = (!isfinite).(D)
+    D_idx = nanround.(D)
+
+    selected = similar(D)
+    relevant_idx = similar(D, Bool)
+    for k=1:K
+        relevant_idx .= (D_idx .== k)
+        selected[relevant_idx] .= (Z[:,:,k] .* relevant_idx)
+    end
+    
+    return -log.(selected)
+end
+
 
 function ordinal_loss_kernel(z::T, l_t::T, r_t::T) where T <: Number
     eps_t = T(1e-15)
@@ -413,7 +472,7 @@ function ordinal_calibration(l_thresh::AbstractMatrix{T},
 end
 
 
-function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibrate=false) where T <: Number
+function invlinkloss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibrate=false) where T <: Number
 
     nanvals = (!isfinite).(D)
     D_idx = nanround.(D)
@@ -435,13 +494,7 @@ function loss(on::OrdinalNoise, Z::AbstractMatrix{T}, D::AbstractMatrix; calibra
 end
 
 
-function summary_str(A::AbstractArray, name::String)
-    return string(name, ": ", size(A), " ", typeof(A))
-end
-
-
-
-function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatrix{T}, D; calibrate=false) where T <: Number
+function ChainRulesCore.rrule(::typeof(invlinkloss), on::OrdinalNoise, Z::AbstractMatrix{T}, D; calibrate=false) where T <: Number
 
     D_idx = nanround.(D)
     R_idx = D_idx .+ UInt8(1) 
@@ -499,11 +552,6 @@ function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractMatri
 
     return l, loss_ordinal_pullback
 end
-
-
-# Remember: inverse link == identity function
-invlinkloss(on::OrdinalNoise, Z, D; kwargs...) = sum(loss(on, Z, D; kwargs...))
-
 
 function Base.view(on::OrdinalNoise, idx)
     return OrdinalNoise(Base.view(on.weight, idx), on.ext_thresholds)

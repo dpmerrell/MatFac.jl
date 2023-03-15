@@ -449,12 +449,6 @@ end
 # Means and variances of loss
 ##############################################################
 
-function column_loss(model::MatFacModel, D::AbstractMatrix)
-    Z = model()
-    L = loss(model.noise_model, Z, D)
-    return L 
-end
-
 
 function batched_column_loss_sum(model::MatFacModel, D::AbstractMatrix; capacity=10^8, map_func=x->x)
     N = size(D,1)
