@@ -388,7 +388,11 @@ function link(on::OrdinalNoise, D)
 end
 
 
-# inverse link function (**WARNING: costly!** we practically never use this) 
+# inverse link function (**WARNING: costly!** we rarely ever use this.
+# Whenever possible, it's better to call `invlinkloss` and directly compute loss
+# without explicitly constructing the inverse-linked values.)
+# Also, it returns a 3D array -- which makes it inconsistent with other
+# noise models' inverse link functions.
 function invlink(on::OrdinalNoise, A)
 
     K = length(on.ext_thresholds) - 1
@@ -397,37 +401,44 @@ function invlink(on::OrdinalNoise, A)
     r_thresh = on.ext_thresholds[2:end]
     r_thresh = reshape(r_thresh, (1,1,K)) 
 
-    # Have to allocate a 3D array!
+    # Need to allocate a 3D array!
     sig = similar(A, (size(A)..., K))
-    sig .= sigmoid(A .- r_thresh) .- sigmoid(A .- l_thresh)
+    sig .= sigmoid(A .- l_thresh) .- sigmoid(A .- r_thresh)
 
     return sig  
 end
 
 
-function ChainRulesCore.rrule(invlink, on::OrdinalNoise, A)
+function ChainRulesCore.rrule(::typeof(invlink), on::OrdinalNoise, A::AbstractMatrix)
     
-    K = length(on.ext_thresholds) - 1
-    l_thresh = on.ext_thresholds[1:K]
-    l_thresh = reshape(l_thresh, (1,1,K)) 
-    r_thresh = on.ext_thresholds[2:end]
-    r_thresh = reshape(r_thresh, (1,1,K)) 
+    K = length(on.ext_thresholds)
+    thresh = reshape(on.ext_thresholds, (1,1,K))
 
     # Have to allocate 3D arrays!
-    sig_l = similar(A, (size(A)..., K)) 
-    sig_l .= sigmoid(A .- l_thresh) 
-    sig_r = similar(A, (size(A)..., K))
-    sig_r .= sigmoid(A .- r_thresh) 
+    sig = similar(A, (size(A)..., K))
+    sig .= sigmoid(A .- thresh)
 
     function ordinal_invlink_pullback(result_bar)
-        A_bar = sig_r.*(1 .- sig_r)
-        A_bar .-= sig_l.*(1 .- sig_l)
-        A_bar .*= result_bar 
-        A_bar = sum(A_bar, dims=3)[:,:,1]
+        sig_var = sig .* (1 .- sig)
+        sig_var_l = view(sig_var, :, :, 1:(K-1))
+        sig_var_r = view(sig_var, :, :, 2:K)
+       
+        sig_var_diff = sig_var_l .- sig_var_r
+        sig_var_diff .*= result_bar
+        
+        A_bar = sum(sig_var_diff, dims=3)[:,:,1]
 
-        return NoTangent(), NoTangent(), A_bar
+        thresh_bar = zero(on.ext_thresholds)
+        thresh_bar[2:K] .= vec(sum(result_bar.*sig_var_r, dims=(1,2)))
+        thresh_bar[1:(K-1)] .-= vec(sum(result_bar.*sig_var_l, dims=(1,2)))
+        
+        on_bar = Tangent{OrdinalNoise}(ext_thresholds=thresh_bar)
+
+        return NoTangent(), on_bar, A_bar
     end
 
+    sig_l = view(sig, :, :, 1:(K-1))
+    sig_r = view(sig, :, :, 2:K)
     result = sig_l .- sig_r
 
     return result, ordinal_invlink_pullback
@@ -442,13 +453,43 @@ function loss(on::OrdinalNoise, Z::AbstractArray, D::AbstractMatrix)
     D_idx = nanround.(D)
 
     selected = similar(D)
+    selected .= 0
     relevant_idx = similar(D, Bool)
     for k=1:K
         relevant_idx .= (D_idx .== k)
-        selected[relevant_idx] .= (Z[:,:,k] .* relevant_idx)
+        selected .+= (Z[:,:,k] .* relevant_idx)
     end
     
-    return -log.(selected)
+    lss = -log.(selected)
+    lss[nan_idx] .= 0 
+    return lss 
+end
+
+
+function ChainRulesCore.rrule(::typeof(loss), on::OrdinalNoise, Z::AbstractArray, D::AbstractMatrix)
+
+    K = length(on.ext_thresholds) - 1
+    
+    nan_idx = (!isfinite).(D)
+    D_idx = nanround.(D)
+
+    selected = similar(D)
+    selected .= 0
+    relevant_idx = similar(Z, Bool)
+    Z_bar = zero(Z)
+    for k=1:K
+        relevant_idx[:,:,k] .= (D_idx .== k)
+    end
+    selected = sum(Z .* relevant_idx, dims=3)[:,:,1]
+    selected[nan_idx] .= 1
+
+    function ordinal_loss_pullback(loss_bar)
+        Z_bar = ((1 ./ Z) .* relevant_idx)
+        Z_bar .*= -(loss_bar .* (!).(nan_idx))
+        return NoTangent(), NoTangent(), Z_bar, NoTangent()
+    end
+
+    return -log.(selected), ordinal_loss_pullback
 end
 
 
@@ -550,7 +591,7 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), on::OrdinalNoise, Z::Abstra
     end
     l .*= transpose(on.weight)
 
-    return l, loss_ordinal_pullback
+    return sum(l), loss_ordinal_pullback
 end
 
 function Base.view(on::OrdinalNoise, idx)
@@ -656,7 +697,7 @@ end
 
 
 link(cn::CompositeNoise, D) = hcat(map((n,rng) -> link(n, view(D,:,rng)), cn.noises, cn.col_ranges)...)
-invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
+#invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
 loss(cn::CompositeNoise, Z, D; kwargs...) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 invlinkloss(cn::CompositeNoise, A, D; kwargs...) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges))
 link_scale(cn::CompositeNoise, D; kwargs...) = vcat(map((n,rng) -> link_scale(n, view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)

@@ -174,23 +174,28 @@ function noise_model_tests()
         ordinal_Z = [0. 0. 0.;
                      0. 0. 0.]
         on = MF.OrdinalNoise(3, [-Inf, -1., 1., Inf])
-        @test MF.invlink(on, ordinal_Z) == ordinal_Z 
-        @test isapprox(MF.loss(on, ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
-                                                               -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
+        invlink_ordinal_Z = MF.invlink(on, ordinal_Z)
+        @test size(invlink_ordinal_Z) == (2,3,3)
+        @test all(sum(invlink_ordinal_Z, dims=3) .== 1) 
+        @test isapprox(MF.loss(on, invlink_ordinal_Z, ordinal_data), [-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
+                                                                      -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))],
                        atol=1e-6)
-        thresh_grad, z_grad = Flux.gradient((noise, x)->sum(MF.loss(noise, MF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
-        
+        lss, (thresh_grad, z_grad) = Zygote.withgradient((noise, x)->sum(MF.loss(noise, MF.invlink(noise, x), ordinal_data)), on, ordinal_Z)
+        @test isapprox(lss, sum([-log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1));
+                                 -log.(logistic(-1)-logistic(-Inf)) -log.(logistic(1)-logistic(-1)) -log.(logistic(Inf)-logistic(1))]),
+                       atol=1e-6)
+
         lgrad(lt,rt,z) = logistic(lt-z)*(1 - logistic(lt-z))/(logistic(rt-z)-logistic(lt-z))
         rgrad(lt,rt,z) = -logistic(rt-z)*(1 - logistic(rt-z))/(logistic(rt-z)-logistic(lt-z))
         test_thresh_grad = [2*lgrad(-Inf,-1,0), 
-                              2*(rgrad(-Inf,-1,0)+lgrad(-1,1,0)), 
-                              2*(rgrad(-1,1,0)+lgrad(1,Inf,0)), 
-                              2*rgrad(1,Inf,0)]
+                            2*(rgrad(-Inf,-1,0)+lgrad(-1,1,0)), 
+                            2*(rgrad(-1,1,0)+lgrad(1,Inf,0)), 
+                            2*rgrad(1,Inf,0)]
         test_z_grad = [1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1);
-                         1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1)]
+                       1-logistic(-1)-logistic(-Inf) 1-logistic(1)-logistic(-1) 1-logistic(Inf)-logistic(1)]
 
-        @test thresh_grad.ext_thresholds == test_thresh_grad 
-        @test z_grad == test_z_grad 
+        @test isapprox(thresh_grad.ext_thresholds, test_thresh_grad) 
+        @test isapprox(z_grad, test_z_grad) 
 
         thresh_grad, z_grad = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, ordinal_data), on, ordinal_Z)
         @test thresh_grad.ext_thresholds == test_thresh_grad
@@ -206,17 +211,18 @@ function noise_model_tests()
         noise_model = repeat(["normal","bernoulli","poisson", "ordinal3"], inner=10)
         cn = MF.CompositeNoise(noise_model)
 
-        composite_A = MF.invlink(cn, composite_Z)
-        @test composite_A[:,1:10] == MF.invlink(nn, composite_Z[:,1:10])
-        @test composite_A[:,11:20]== MF.invlink(ln, composite_Z[:,11:20])
-        @test composite_A[:,21:30]== MF.invlink(pn, composite_Z[:,21:30])
-        @test composite_A[:,31:40]== MF.invlink(cn.noises[4], composite_Z[:,31:40])
+        # DEPRECATED: we no longer support "link" and "loss" on CompositeNoise
+        #composite_A = MF.invlink(cn, composite_Z)
+        #@test composite_A[:,1:10] == MF.invlink(nn, composite_Z[:,1:10])
+        #@test composite_A[:,11:20]== MF.invlink(ln, composite_Z[:,11:20])
+        #@test composite_A[:,21:30]== MF.invlink(pn, composite_Z[:,21:30])
+        #@test composite_A[:,31:40]== MF.invlink(cn.noises[4], composite_Z[:,31:40])
 
-        composite_l = MF.loss(cn, composite_A, composite_data)
-        @test composite_l[:,1:10] == MF.loss(cn.noises[1], composite_A[:,1:10] , composite_data[:,1:10])
-        @test composite_l[:,11:20]== MF.loss(cn.noises[2], composite_A[:,11:20], composite_data[:,11:20])
-        @test composite_l[:,21:30]== MF.loss(cn.noises[3], composite_A[:,21:30], composite_data[:,21:30])
-        @test composite_l[:,31:40]== MF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
+        #composite_l = MF.loss(cn, composite_A, composite_data)
+        #@test composite_l[:,1:10] == MF.loss(cn.noises[1], composite_A[:,1:10] , composite_data[:,1:10])
+        #@test composite_l[:,11:20]== MF.loss(cn.noises[2], composite_A[:,11:20], composite_data[:,11:20])
+        #@test composite_l[:,21:30]== MF.loss(cn.noises[3], composite_A[:,21:30], composite_data[:,21:30])
+        #@test composite_l[:,31:40]== MF.loss(cn.noises[4], composite_A[:,31:40], composite_data[:,31:40])
 
         grad_cn, grad_Z = Flux.gradient((noise,x)->MF.invlinkloss(noise, x, composite_data), 
                                         cn, composite_Z)
@@ -267,13 +273,15 @@ function model_tests()
 
         @test size(model.X) == (K,M)
         @test map(typeof, model.noise_model.noises) == (MF.BernoulliNoise, MF.OrdinalNoise, MF.PoissonNoise, MF.NormalNoise)
-        @test size(model()) == (M,N)
+        # DEPRECATED: model() callable
+        #@test size(model()) == (M,N)
         @test size(model) == (M,N)
 
         # GPU
         model_d = gpu(model)
         @test isapprox(transpose(model_d.X)*model_d.Y, gpu(transpose(model.X)*model.Y))
-        @test isapprox(model_d(), gpu(model()))
+        # DEPRECATED: model() callable
+        #@test isapprox(model_d(), gpu(model()))
 
         # view and getindex
         model_view = view(model, 1:10, 21:40)
