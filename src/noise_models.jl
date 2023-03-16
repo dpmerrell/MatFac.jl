@@ -19,7 +19,7 @@ end
 
 # link
 function link(::NormalNoise, A::AbstractMatrix)
-    return copy(A)
+    return A
 end
 
 # inverse link

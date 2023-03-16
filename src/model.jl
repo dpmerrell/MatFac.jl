@@ -111,13 +111,27 @@ function MatFacModel(M::Integer, N::Integer, K::Integer,
 end
 
 
+function forward(X, Y, row_trans, col_trans)
+    return col_trans(
+               row_trans(
+                   transpose(X)*Y
+                        )
+                    )
+end
+
+function forward(mf::MatFacModel)
+    return forward(mf.X, mf.Y, mf.row_transform, mf.col_transform)
+end
+
+
+function (mf::MatFacModel)()
+    return forward(mf)
+end
+
+
 function data_loss(X, Y, row_trans, col_trans, noise_model, D; kwargs...)
     return invlinkloss(noise_model, 
-               col_trans(
-                   row_trans(
-                       transpose(X)*Y
-                   )
-               ),
+               forward(X, Y, row_trans, col_trans),
                D; kwargs...
            )
 end
@@ -128,7 +142,6 @@ function data_loss(bm::MatFacModel, D; kwargs...)
                      bm.row_transform, bm.col_transform, 
                      bm.noise_model, D; kwargs...)
 end
-
 
 
 
