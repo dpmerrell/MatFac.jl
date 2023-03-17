@@ -69,8 +69,8 @@ function Base.getindex(nn::NormalNoise, idx)
 end
 
 
-function link_scale(nn::NormalNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_link_scale(nn, D; capacity=capacity, kwargs...) 
+function link_col_sqerr(nn::NormalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...) 
 end
 
 
@@ -209,14 +209,20 @@ function Base.getindex(bn::BernoulliNoise, idx)
     return BernoulliNoise(Base.getindex(bn.weight, idx))
 end
 
-function link_scale(bn::BernoulliNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
-    N = size(D,2)
-    p_vec = cpu(column_means(D))
-    mu_vec = logit(p_vec)
-    scale_vec = similar(D, N)
-    scale_vec .= mu_vec ./ quantile(Normal(), p_vec)
-    return scale_vec
+function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+    result = similar(D)
+    result .= 1
+    return result
 end
+
+#function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+#    #N = size(D,2)
+#    #p_vec = cpu(column_nanmeans(D))
+#    #mu_vec = logit(p_vec)
+#    #scale_vec = similar(D, N)
+#    #scale_vec .= mu_vec ./ quantile(Normal(), p_vec)
+#    return scale_vec
+#end
 
 
 #########################################################
@@ -324,8 +330,8 @@ end
 poisson_sample(z) = rand(Poisson(z))
 
 
-function link_scale(pn::PoissonNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_link_scale(pn, D; capacity=capacity, kwargs...)
+function link_col_sqerr(pn::PoissonNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
 end
 
 
@@ -602,8 +608,8 @@ function Base.getindex(on::OrdinalNoise, idx)
     return OrdinalNoise(Base.getindex(on.weight, idx), copy(on.ext_thresholds))
 end
 
-function link_scale(ord::OrdinalNoise, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_link_scale(ord, D; capacity=capacity, kwargs...)
+function link_col_sqerr(ord::OrdinalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+    return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
 end
 
 #########################################################
@@ -700,7 +706,8 @@ link(cn::CompositeNoise, D) = hcat(map((n,rng) -> link(n, view(D,:,rng)), cn.noi
 #invlink(cn::CompositeNoise, A) = hcat(map((n,rng)->invlink(n, view(A,:,rng)), cn.noises, cn.col_ranges)...)
 loss(cn::CompositeNoise, Z, D; kwargs...) = hcat(map((n,rng)->loss(n, view(Z,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 invlinkloss(cn::CompositeNoise, A, D; kwargs...) = sum(map((n,rng)->invlinkloss(n, view(A,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges))
-link_scale(cn::CompositeNoise, D; kwargs...) = vcat(map((n,rng) -> link_scale(n, view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
+#link_scale(cn::CompositeNoise, D; kwargs...) = vcat(map((n,rng) -> link_scale(n, view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
+link_col_sqerr(cn::CompositeNoise, model, D; kwargs...) = vcat(map((n,rng) -> link_col_sqerr(n, view(model,:,rng), view(D,:,rng); kwargs...), cn.noises, cn.col_ranges)...)
 
 function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D; kwargs...)
 
