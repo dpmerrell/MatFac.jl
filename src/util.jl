@@ -269,28 +269,12 @@ function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
     N = size(D, 2)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    result = vec(batched_mapreduce((m,d) -> (m() .- link(m.noise_model, d)).^2,
+    result = vec(batched_mapreduce((m,d) -> (link(m.noise_model, d) - m()).^2,
                                    (st, ssq) -> st .+ sum(ssq, dims=1),
                                    model, D)
                 )
     return result
 end
-
-
-#function batched_link_scale(noise_model, D; capacity=10^8, latent_map_fn=l->l)
-#
-#    mean_vec = batched_link_mean(noise_model, D; capacity=capacity, latent_map_fn=latent_map_fn)
-#    M, N = size(D)
-#   
-#    map_func = l -> latent_map_fn(l).^2
-#    meansq_vec = batched_link_mean(noise_model, D; capacity=capacity, latent_map_fn=map_func)
-#    
-#    # Compute column variances via 
-#    # V[x] = E[x^2] - E[x]^2
-#    # (after link function)
-#    var_vec = meansq_vec .- (mean_vec.*mean_vec)
-#    return sqrt.(var_vec)
-#end
 
 
 function column_total_loss(noise_model, D, mean_vec)

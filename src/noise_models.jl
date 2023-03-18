@@ -221,7 +221,7 @@ end
 #    #mu_vec = logit(p_vec)
 #    #scale_vec = similar(D, N)
 #    #scale_vec .= mu_vec ./ quantile(Normal(), p_vec)
-#    return scale_vec
+#    return scale_vec.^2
 #end
 
 
