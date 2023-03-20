@@ -210,8 +210,9 @@ function Base.getindex(bn::BernoulliNoise, idx)
 end
 
 function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    result = similar(D)
-    result .= 1
+    M,N = size(D)
+    result = similar(D,N)
+    result .= M
     return result
 end
 

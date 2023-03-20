@@ -264,12 +264,20 @@ function batched_link_mean(noise_model, D; capacity=10^8, latent_map_fn=l->l)
 end
 
 
+function sqerr_func(model, D)
+    diff = (link(model.noise_model, D) - model())
+    diff .*= diff
+    diff[(!isfinite).(diff)] .= 0
+    return diff
+end
+
+
 function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
 
     N = size(D, 2)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    result = vec(batched_mapreduce((m,d) -> (link(m.noise_model, d) - m()).^2,
+    result = vec(batched_mapreduce(sqerr_func,
                                    (st, ssq) -> st .+ sum(ssq, dims=1),
                                    model, D)
                 )
