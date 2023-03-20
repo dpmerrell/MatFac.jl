@@ -4,6 +4,11 @@ import StatsBase: fit!
 
 AbstractOptimiser = Flux.Optimise.AbstractOptimiser
 
+function negprint(x, name)
+    if x < 0
+        println(string("NEGATIVE LOSS: ", name))
+    end
+end
 
 """
     fit!(model::MatFacModel, D::AbstractMatrix;
@@ -345,7 +350,13 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         loss = (d_loss_total + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
         elapsed = time() - t_start
-        
+       
+        negprint(d_loss_total, "DATA LOSS")
+        negprint(row_layer_reg_loss, "ROW LAYER REG LOSS")
+        negprint(col_layer_reg_loss, "COL LAYER REG LOSS")
+        negprint(X_reg_loss, "X REG LOSS")
+        negprint(Y_reg_loss, "Y REG LOSS")
+ 
         history!(hist; data_loss=d_loss_total, 
                        row_layer_reg_loss=row_layer_reg_loss,
                        col_layer_reg_loss=col_layer_reg_loss,
@@ -374,7 +385,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
                 tol_iters = 0
             end
         else # Loss is higher than the best loss!
-            if loss_diff < 0 # Loss is increase! 
+            if loss_diff < 0 # Loss has increased! 
                 tol_iters += 1
                 vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase\n"; level=1)
             end
