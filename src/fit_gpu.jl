@@ -314,8 +314,8 @@ function fit!(model::MatFacModel, D::CuMatrix;
             end
         else # Loss is higher than the best loss!
             if loss_diff < 0 # Loss is increase! 
-                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase\n"; level=1)
                 tol_iters += 1
+                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase\n"; level=1)
             end
         end
         prev_loss = loss

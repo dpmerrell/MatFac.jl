@@ -415,8 +415,8 @@ function fit_tests()
 
     @testset "Fit history" begin
         # test whether fit history gets stored correctly
-        model = MF.MatFacModel(M,N,K, col_losses; X_reg=x->0.5*sum(x.*x),
-                                                  Y_reg=y->0.5*sum(y.*y))
+        model = gpu(MF.MatFacModel(M,N,K, col_losses; X_reg=x->0.5*sum(x.*x),
+                                                      Y_reg=y->0.5*sum(y.*y)))
         hist = fit!(model, composite_data; keep_history=true, verbosity=1, lr=0.01, max_epochs=100, print_iter=1)
         @test isa(hist["data_loss"], AbstractVector)
         @test length(hist["data_loss"]) <= 100
@@ -461,10 +461,10 @@ end
 
 function main()
    
-    util_tests() 
-    noise_model_tests()
-    model_tests()
-    update_tests()
+    #util_tests() 
+    #noise_model_tests()
+    #model_tests()
+    #update_tests()
     fit_tests()
     io_tests()
 

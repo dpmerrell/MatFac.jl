@@ -257,7 +257,7 @@ end
 function poisson_loss_kernel(z::T, d::Number) where T <: Number
     d_t = T(d)
     eps_t = T(1e-15)
-    return z - d*log(z + eps_t)
+    return z - d_t*log(z + eps_t)
 end
 
 function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
@@ -365,9 +365,9 @@ end
 
 nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
 
-function idx_kernel(i::T where T <: Integer, v::AbstractVector{U} where U <: Real) 
-    return v[i]
-end
+#function idx_kernel(i::Integer, v::AbstractVector{U}) where U <: Real 
+#    return U(v[i])
+#end
 
 
 # link function
@@ -379,8 +379,10 @@ function link(on::OrdinalNoise, D)
     R_idx = D_idx .+ UInt8(1) 
 
     sort!(on.ext_thresholds)
-    l_thresh = map(i->idx_kernel(i, on.ext_thresholds), D_idx)
-    r_thresh = map(i->idx_kernel(i, on.ext_thresholds), R_idx)
+    #l_thresh = map(i->idx_kernel(i, on.ext_thresholds), D_idx)
+    #r_thresh = map(i->idx_kernel(i, on.ext_thresholds), R_idx)
+    l_thresh = on.ext_thresholds[D_idx]
+    r_thresh = on.ext_thresholds[R_idx]
 
     thresholds_cpu = cpu(on.ext_thresholds)
     T = eltype(on.ext_thresholds)
