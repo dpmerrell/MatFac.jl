@@ -301,7 +301,7 @@ function fit!(model::MatFacModel, D::CuMatrix;
         # Check termination conditions
         loss_diff = prev_loss - loss
         epoch += 1 
-        if loss < best_loss # We've improved on the best loss!
+        if loss <= best_loss # We're at least as good as the best loss!
             best_loss = loss
             if loss_diff < abs_tol
                 tol_iters += 1
