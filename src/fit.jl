@@ -501,11 +501,7 @@ end
 
 function column_ssq_grads(model, D)
 
-    Z = model.col_trans(
-            model.row_trans(
-                transpose(model.X)*model.Y
-                   )
-               )
+    Z = forward(model)
     grads = Zygote.gradient(A->invlinkloss(model.noise_model, A, D), Z)[1]
     return sum(grads .* grads; dims=1)
 end
