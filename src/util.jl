@@ -169,8 +169,10 @@ end
 
 function column_nonnan(D::AbstractMatrix)
     nonnan_idx = (!isnan).(D)
-    M_vec = vec(sum(nonnan_idx, dims=1))
-    return M_vec
+    N = size(D,2)
+    result = similar(D,N)
+    result .= vec(sum(nonnan_idx, dims=1))
+    return result
 end
 
 function column_nansum(D::AbstractMatrix)
@@ -279,7 +281,7 @@ function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
     reduce_start .= 0
     result = vec(batched_mapreduce(sqerr_func,
                                    (st, ssq) -> st .+ sum(ssq, dims=1),
-                                   model, D)
+                                   model, D; start=reduce_start, capacity=capacity)
                 )
     return result
 end
