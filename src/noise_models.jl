@@ -210,7 +210,7 @@ function Base.getindex(bn::BernoulliNoise, idx)
 end
 
 function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_column_ssq_grads(model, D; capacity=capacity)
+    return vec(batched_column_ssq_grads(model, D; capacity=capacity))
 end
 
 #function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
