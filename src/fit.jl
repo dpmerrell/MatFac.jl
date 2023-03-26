@@ -345,7 +345,12 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         loss = (d_loss_total + row_layer_reg_loss 
                 + col_layer_reg_loss + X_reg_loss + Y_reg_loss)
         elapsed = time() - t_start
-       
+
+        print_nan(d_loss_total, "DATA LOSS") 
+        print_nan(col_layer_reg_loss, "COL LAYER REG LOSS")
+        print_nan(X_reg_loss, "X REG LOSS")
+        print_nan(Y_reg_loss, "Y REG LOSS")
+
         history!(hist; data_loss=d_loss_total, 
                        row_layer_reg_loss=row_layer_reg_loss,
                        col_layer_reg_loss=col_layer_reg_loss,

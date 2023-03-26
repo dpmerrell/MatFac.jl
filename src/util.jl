@@ -334,3 +334,13 @@ function finalize_history!(hist::Nothing)
     return
 end
 
+####################################################
+# Debugging tool
+####################################################
+
+function print_nan(X, name)
+    nan_idx = (!isfinite).(X)
+    if any(nan_idx)
+        println(string("Non-finite values in ", name, ": ", sum(nan_idx)))
+    end
+end
