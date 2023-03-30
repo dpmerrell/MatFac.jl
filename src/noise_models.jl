@@ -337,7 +337,6 @@ end
 # Ordinal noise model
 #########################################################
 
-
 mutable struct OrdinalNoise
     weight::AbstractVector
     ext_thresholds::AbstractVector{<:Number}
@@ -362,11 +361,6 @@ end
 
 nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
 
-#function idx_kernel(i::Integer, v::AbstractVector{U}) where U <: Real 
-#    return U(v[i])
-#end
-
-
 # link function
 
 function link(on::OrdinalNoise, D)
@@ -376,8 +370,6 @@ function link(on::OrdinalNoise, D)
     R_idx = D_idx .+ UInt8(1) 
 
     sort!(on.ext_thresholds)
-    #l_thresh = map(i->idx_kernel(i, on.ext_thresholds), D_idx)
-    #r_thresh = map(i->idx_kernel(i, on.ext_thresholds), R_idx)
     l_thresh = on.ext_thresholds[D_idx]
     r_thresh = on.ext_thresholds[R_idx]
 
@@ -609,7 +601,11 @@ function Base.getindex(on::OrdinalNoise, idx)
 end
 
 function link_col_sqerr(ord::OrdinalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
+    #return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
+    M, N = size(D)
+    result = similar(D, N)
+    result .= M
+    return result
 end
 
 #########################################################
@@ -728,7 +724,6 @@ function ChainRulesCore.rrule(::typeof(invlinkloss), cn::CompositeNoise, A, D; k
             push!(cn_bar, noise_bar)
             A_bar[:,rng] .= abar
         end
-
         return ChainRulesCore.NoTangent(),
                Tangent{CompositeNoise}(noises=Tuple(cn_bar)),
                A_bar,
