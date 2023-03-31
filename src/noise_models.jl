@@ -688,19 +688,146 @@ function Base.getindex(on::OrdinalNoise, idx)
 end
 
 function link_col_sqerr(ord::OrdinalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    #return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
+    n_levels = length(ord.ext_thresholds) - 1
     M, N = size(D)
     result = similar(D, N)
-    result .= M
+    result .= (M*n_levels*n_levels)
     return result
 end
+
+
+#########################################################
+# Ordinal squared hinge noise
+#########################################################
+
+mutable struct OrdinalSqHingeNoise
+    weight::AbstractVector
+    ext_thresholds::AbstractVector{<:Number}
+end
+
+@functor OrdinalSqHingeNoise
+Flux.trainable(on::OrdinalSqHingeNoise) = (ext_thresholds=on.ext_thresholds,)
+
+function OrdinalSqHingeNoise(weight::AbstractVector, n_values::Integer)
+    thresholds = collect(1:(n_values - 1)) .- 0.5*n_values
+    ext_thresholds = [[-Inf]; thresholds; [Inf]]
+    return OrdinalSqHingeNoise(weight, ext_thresholds)
+end
+
+function OrdinalSqHingeNoise(N::Integer, ext_thresholds::Vector{<:Number})
+    return OrdinalSqHingeNoise(ones(N), ext_thresholds)
+end
+
+function OrdinalSqHingeNoise(N::Integer, n_values::Integer)
+    return OrdinalSqHingeNoise(ones(N), n_values)
+end
+
+nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
+
+
+# link function
+link(osh::OrdinalSqHingeNoise, D::AbstractMatrix) = D
+
+# inverse link function
+invlink(osh::OrdinalSqHingeNoise, A::AbstractMatrix) = A
+
+# loss function
+function loss(osh::OrdinalSqHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
+
+    nanvals = (!isfinite).(D)
+
+    sort!(osh.ext_thresholds)
+
+    L_idx = nanround.(D)
+    l_thresh = osh.ext_thresholds[L_idx]
+    l_diff = A .- l_thresh .- 1
+    l_mask = (l_diff .> 0)
+    loss = l_diff.*l_diff
+    loss[l_mask] .= 0
+
+    R_idx = L_idx .+ UInt8(1) 
+    r_thresh = osh.ext_thresholds[R_idx]
+    r_diff = A .- r_thresh .+ 1
+    r_mask = (r_diff .< 0)
+    r_loss = r_diff .* r_diff
+    r_loss[r_mask] .= 0
+    
+    loss .+= r_loss
+
+    loss[nanvals] .= 0
+    loss .*= transpose(osh.weight)
+
+    return 0.5.*loss
+end
+
+
+function ChainRulesCore.rrule(::typeof(loss), osh::OrdinalSqHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
+
+    nanvals = (!isfinite).(D)
+
+    sort!(osh.ext_thresholds)
+
+    L_idx = nanround.(D)
+    l_thresh = osh.ext_thresholds[L_idx]
+    l_diff = A .- l_thresh .- 1
+    l_mask = (l_diff .> 0)
+    l_diff[l_mask] .= 0
+    l_diff[nanvals] .= 0
+
+    R_idx = L_idx .+ UInt8(1) 
+    r_thresh = osh.ext_thresholds[R_idx]
+    r_diff = A .- r_thresh .+ 1
+    r_mask = (r_diff .< 0)
+    r_diff[r_mask] .= 0
+    r_diff[nanvals] .= 0
+
+    function ordinal_sq_hinge_pullback(loss_bar)
+        w = loss_bar .* osh.weight
+        A_bar = transpose(w) .* (l_diff .+ r_diff)
+        thresh_bar = zeros(Float32, length(osh.ext_thresholds))
+      
+        for k=2:(length(thresh_bar)-1)
+            rel_L_idx = (L_idx .== k)
+            rel_R_idx = (R_idx .== k)
+
+            rel_r_diff = rel_R_idx .* r_diff
+            rel_l_diff = rel_L_idx .* l_diff
+
+            thresh_bar[k] = -sum(transpose(w) .* (rel_r_diff .+ rel_l_diff))
+        end 
+        thresh_bar = Flux.gpu(thresh_bar) 
+        return NoTangent(), Tangent{OrdinalSqHingeNoise}(ext_thresholds=thresh_bar),
+               A_bar, NoTangent()
+    end    
+
+    loss = l_diff.*l_diff
+    loss = l_diff.*l_diff .+ r_diff.*r_diff
+
+    return 0.5.*sum(loss), ordinal_sq_hinge_pullback
+end
+
+
+invlinkloss(osh::OrdinalSqHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...) = sum(loss(osh, A, D; kwargs...)) 
+
+function view(osh::OrdinalSqHingeNoise, idx)
+    return OrdinalSqHingeNoise(view(osh.weight, idx), osh.ext_thresholds)
+end
+
+function link_col_sqerr(osh::OrdinalSqHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+
+    n_levels = length(osh.ext_thresholds) - 1
+    M, N = size(D)
+    result = similar(D, N)
+    result .= (M*n_levels*n_levels)
+    return result
+end
+
 
 #########################################################
 # "Composite" noise model
 #########################################################
 # This struct assigns noise models
 # to ranges of columns.
-
 
 mutable struct CompositeNoise
     col_ranges::Tuple # UnitRanges
@@ -904,10 +1031,13 @@ function construct_noise(string_id::String, weight::AbstractVector)
     elseif string_id == "poisson"
         noise = PoissonNoise(weight)
     elseif startswith(string_id, "ordinal")
-        n_values = parse(Int, string_id[8:end])
-        noise = OrdinalNoise(weight, n_values)
+        n_levels = parse(Int, string_id[8:end])
+        noise = OrdinalNoise(weight, n_levels)
+    elseif startswith(string_id, "ordinal_sq_hinge")
+        n_levels = parse(Int, string_id[17:end])
+        noise = OrdinalSqHingeNoise(weight, n_levels)
     else
-        throw(ArgumentError, string(string_id, " is not a valid noise model identifier"))
+        throw(ArgumentError(string(string_id, " is not a valid noise model identifier")))
     end
 
     return noise

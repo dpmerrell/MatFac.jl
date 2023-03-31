@@ -211,6 +211,19 @@ function noise_model_tests()
         @test z_grad == test_z_grad
 
 
+        # Ordinal Squared Hinge loss
+        osh = MF.OrdinalSqHingeNoise(3, [-Inf, -1., 1., Inf])
+        @test isapprox(MF.invlink(osh, ordinal_Z), ordinal_Z)
+        @test isapprox(MF.loss(osh, ordinal_Z, ordinal_data), 0.5.*[4. 0. 4.;
+                                                                    4. 0. 4.])
+        lss, (thresh_grad, z_grad) = Zygote.withgradient((noise,x)->sum(MF.invlinkloss(noise, x, ordinal_data)), osh, ordinal_Z)
+        @test isapprox(lss, 0.5*sum([4. 0. 4.;
+                                     4. 0. 4.]))
+        @test isapprox(thresh_grad.ext_thresholds, [0., -4., 4., 0.])
+        @test isapprox(z_grad, [2. 0. -2.;
+                                2. 0. -2.])
+
+
         # Composite noise models
         composite_Z = zeros(M,N)
         composite_data = zeros(M,N)
@@ -470,10 +483,10 @@ end
 
 function main()
    
-    #util_tests() 
-    #noise_model_tests()
-    #model_tests()
-    #update_tests()
+    util_tests() 
+    noise_model_tests()
+    model_tests()
+    update_tests()
     fit_tests()
     io_tests()
 
