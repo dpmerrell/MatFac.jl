@@ -222,6 +222,93 @@ end
 #    return scale_vec.^2
 #end
 
+#########################################################
+# Squared hinge "noise" (for binary variables)
+#########################################################
+
+mutable struct SquaredHingeNoise
+    weight::AbstractVector
+end
+
+@functor SquaredHingeNoise
+Flux.trainable(shn::SquaredHingeNoise) = ()
+
+function SquaredHingeNoise(N::Integer)
+    return SquaredHingeNoise(ones(N))
+end
+
+function link(shn::SquaredHingeNoise, A::AbstractMatrix)
+    return A
+end
+
+function invlink(shn::SquaredHingeNoise, A::AbstractMatrix)
+    return A
+end
+
+function loss(shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
+    result = zero(A)
+
+    # Convert data to +/- 1 
+    S = sign.(D .- Float32(0.5))
+
+    # We'll zero out the entries where
+    # (1) A and data have the same sign and
+    # (2) A has absolute value > 1
+    mask_idx = (!).(S.*A .> 1)
+
+    result .= (A .- S)
+    result .*= result
+    result .*= Float32(0.5)
+    
+    result .*= mask_idx
+
+    result .*= transpose(shn.weight) 
+    return result
+end
+
+
+function ChainRulesCore.rrule(::typeof(loss), shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
+
+    S = sign.(D .- Float32(0.5))
+    mask_idx = (!).(S.*A .> 1)
+    A_grad = (A .- S)
+    A_grad .*= mask_idx
+
+    result = Float32(0.5) .* A_grad .* A_grad
+
+    function sq_hinge_loss_pullback(loss_bar)
+        A_bar = (loss_bar .* A_grad) .* transpose(shn.weight)
+        return NoTangent(), NoTangent(),
+               A_bar, NoTangent()
+    end
+
+    result .*= transpose(shn.weight) 
+
+    return result, sq_hinge_loss_pullback
+end
+
+invlinkloss(shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...) = sum(loss(shn, A, D; kwargs...))
+
+function Base.view(pn::SquaredHingeNoise, idx)
+    return SquaredHingeNoise(Base.view(pn.weight, idx))
+end
+
+function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+    #return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
+    M, N = size(D)
+    result = similar(D, N)
+    result .= M
+    return result
+end
+
+#function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
+#    N = size(D,2)
+#    p_vec = cpu(column_nanmeans(D))
+#    mu_vec = logit(p_vec)
+#    scale_vec = similar(D, N)
+#    scale_vec .= mu_vec ./ quantile(Normal(), p_vec)
+#    return scale_vec.^2
+#end
 
 #########################################################
 # Poisson noise model
@@ -812,6 +899,8 @@ function construct_noise(string_id::String, weight::AbstractVector)
         noise = NormalNoise(weight)
     elseif string_id == "bernoulli"
         noise = BernoulliNoise(weight)
+    elseif string_id == "bernoulli_sq_hinge"
+        noise = SquaredHingeNoise(weight)
     elseif string_id == "poisson"
         noise = PoissonNoise(weight)
     elseif startswith(string_id, "ordinal")

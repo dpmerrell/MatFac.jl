@@ -158,6 +158,15 @@ function noise_model_tests()
         @test Flux.gradient(x->sum(MF.loss(ln, x, logistic_data)), logistic_A)[1] == -2.0.*ones(M,N)
         @test Flux.gradient(x->MF.invlinkloss(ln, x, logistic_data), logistic_Z)[1] == (logistic_A .- logistic_data)
 
+        # Squared hinge loss
+        hinge_data = rand([0.0, 1.0], M,N)
+        hinge_Z = randn(M,N)
+        shn = MF.SquaredHingeNoise(N)
+        @test isapprox(MF.invlink(shn, hinge_Z), hinge_Z)
+        S = sign.(hinge_data .- 0.5)
+        test_gradient = hinge_Z .- S
+        test_gradient[(sign.(hinge_Z) .== S) .& (abs.(hinge_Z) .> 1)] .= 0
+        @test isapprox(Flux.gradient(x->sum(MF.invlinkloss(shn, x, hinge_data)), hinge_Z)[1], test_gradient)
 
         # Poisson noise model
         poisson_data = ones(M,N)
