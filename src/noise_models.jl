@@ -722,9 +722,6 @@ function OrdinalSqHingeNoise(N::Integer, n_values::Integer)
     return OrdinalSqHingeNoise(ones(N), n_values)
 end
 
-nanround(x) = isfinite(x) ? round(UInt8, x) : UInt8(1)
-
-
 # link function
 link(osh::OrdinalSqHingeNoise, D::AbstractMatrix) = D
 
