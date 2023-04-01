@@ -237,8 +237,11 @@ function SquaredHingeNoise(N::Integer)
     return SquaredHingeNoise(ones(N))
 end
 
-function link(shn::SquaredHingeNoise, A::AbstractMatrix)
-    return A
+function link(shn::SquaredHingeNoise, D::AbstractMatrix)
+    result = copy(D)
+    result[D .== 0] .= -1
+
+    return result
 end
 
 function invlink(shn::SquaredHingeNoise, A::AbstractMatrix)
@@ -729,16 +732,24 @@ function OrdinalSqHingeNoise(N::Integer, n_values::Integer)
     return OrdinalSqHingeNoise(ones(N), n_values)
 end
 
-# link function
+# link function. We'll just map from
+# ordinal values to "hidden" values implied by the 
+# thresholds.
 function link(osh::OrdinalSqHingeNoise, D::AbstractMatrix)
 
     nan_idx = (!isfinite).(D)
 
+    temp_thresh = Flux.cpu(osh.ext_thresholds)
+    min_thresh = temp_thresh[2] - 1
+    max_thresh = temp_thresh[end-1] + 1
+
     L_idx = nanround.(D)
     l_thresh = osh.ext_thresholds[L_idx]
+    l_thresh = map(th -> isfinite(th) ? th : min_thresh, l_thresh) 
 
     R_idx = L_idx .+ UInt8(1) 
     r_thresh = osh.ext_thresholds[R_idx]
+    r_thresh = map(th -> isfinite(th) ? th : max_thresh, r_thresh) 
 
     midpoints = 0.5.*(l_thresh .+ r_thresh)
 
@@ -837,7 +848,8 @@ function link_col_sqerr(osh::OrdinalSqHingeNoise, model, D::AbstractMatrix; capa
     n_thresh = length(osh.ext_thresholds) - 2
     M, N = size(D)
     result = similar(D, N)
-    result .= (M*n_thresh*n_thresh)
+    #result .= (M*n_thresh*n_thresh)
+    result .= M
     return result
 end
 
