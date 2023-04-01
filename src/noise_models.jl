@@ -246,6 +246,8 @@ function invlink(shn::SquaredHingeNoise, A::AbstractMatrix)
 end
 
 function loss(shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
+
+    nan_idx = (!isfinite).(D)
     result = zero(A)
 
     # Convert data to +/- 1 
@@ -262,17 +264,22 @@ function loss(shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwar
     
     result .*= mask_idx
 
-    result .*= transpose(shn.weight) 
+    result .*= transpose(shn.weight)
+
+    result[nan_idx] .= 0
     return result
 end
 
 
 function ChainRulesCore.rrule(::typeof(loss), shn::SquaredHingeNoise, A::AbstractMatrix, D::AbstractMatrix; kwargs...)
 
+    nan_idx = (!isfinite).(D)
+
     S = sign.(D .- Float32(0.5))
     mask_idx = (!).(S.*A .> 1)
     A_grad = (A .- S)
     A_grad .*= mask_idx
+    A_grad[nan_idx] .= 0
 
     result = Float32(0.5) .* A_grad .* A_grad
 
@@ -723,9 +730,24 @@ function OrdinalSqHingeNoise(N::Integer, n_values::Integer)
 end
 
 # link function
-link(osh::OrdinalSqHingeNoise, D::AbstractMatrix) = D
+function link(osh::OrdinalSqHingeNoise, D::AbstractMatrix)
 
-# inverse link function
+    nan_idx = (!isfinite).(D)
+
+    L_idx = nanround.(D)
+    l_thresh = osh.ext_thresholds[L_idx]
+
+    R_idx = L_idx .+ UInt8(1) 
+    r_thresh = osh.ext_thresholds[R_idx]
+
+    midpoints = 0.5.*(l_thresh .+ r_thresh)
+
+    midpoints[nan_idx] .= NaN
+
+    return midpoints
+end
+
+# inverse link function. We'll just have it do nothing.
 invlink(osh::OrdinalSqHingeNoise, A::AbstractMatrix) = A
 
 # loss function
@@ -812,10 +834,10 @@ end
 
 function link_col_sqerr(osh::OrdinalSqHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
 
-    n_levels = length(osh.ext_thresholds) - 1
+    n_thresh = length(osh.ext_thresholds) - 2
     M, N = size(D)
     result = similar(D, N)
-    result .= (M*n_levels*n_levels)
+    result .= (M*n_thresh*n_thresh)
     return result
 end
 
@@ -1021,18 +1043,18 @@ function construct_noise(string_id::String, weight::AbstractVector)
 
     if string_id == "normal"
         noise = NormalNoise(weight)
-    elseif string_id == "bernoulli"
-        noise = BernoulliNoise(weight)
     elseif string_id == "bernoulli_sq_hinge"
         noise = SquaredHingeNoise(weight)
+    elseif string_id == "bernoulli"
+        noise = BernoulliNoise(weight)
     elseif string_id == "poisson"
         noise = PoissonNoise(weight)
-    elseif startswith(string_id, "ordinal")
-        n_levels = parse(Int, string_id[8:end])
-        noise = OrdinalNoise(weight, n_levels)
     elseif startswith(string_id, "ordinal_sq_hinge")
         n_levels = parse(Int, string_id[17:end])
         noise = OrdinalSqHingeNoise(weight, n_levels)
+    elseif startswith(string_id, "ordinal")
+        n_levels = parse(Int, string_id[8:end])
+        noise = OrdinalNoise(weight, n_levels)
     else
         throw(ArgumentError(string(string_id, " is not a valid noise model identifier")))
     end
