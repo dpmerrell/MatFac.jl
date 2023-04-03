@@ -217,8 +217,8 @@ function noise_model_tests()
         @test isapprox(MF.loss(osh, ordinal_Z, ordinal_data), 0.5.*[4. 0. 4.;
                                                                     4. 0. 4.])
         lss, (thresh_grad, z_grad) = Zygote.withgradient((noise,x)->sum(MF.invlinkloss(noise, x, ordinal_data)), osh, ordinal_Z)
-        @test isapprox(lss, 0.5*sum([4. 0. 4.;
-                                     4. 0. 4.]))
+        @test isapprox(lss, 0.5*sum(transpose(osh.weight).*[4. 0. 4.;
+                                                            4. 0. 4.]))
         @test isapprox(thresh_grad.ext_thresholds, [0., -4., 4., 0.])
         @test isapprox(z_grad, [2. 0. -2.;
                                 2. 0. -2.])

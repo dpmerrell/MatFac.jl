@@ -21,6 +21,7 @@ function fit!(model::MatFacModel, D::CuMatrix;
               update_Y=true,
               update_row_layers=true,
               update_col_layers=true,
+              update_noise_models=true,
               update_X_reg=true,
               update_Y_reg=true,
               update_row_layers_reg=true,
@@ -180,6 +181,8 @@ function fit!(model::MatFacModel, D::CuMatrix;
                 end
                 if update_col_layers
                     binop!(.+, col_layer_grad, grads[2])
+                end
+                if update_noise_models
                     binop!(.+, noise_model_grad, grads[3])
                 end
             end
@@ -209,14 +212,15 @@ function fit!(model::MatFacModel, D::CuMatrix;
                 # Then update the column layers with the accumulated gradient 
                 binop!(.+, col_layer_grad, reg_grads[1])
                 update!(opt, model.col_transform, col_layer_grad)
-                
-                # Update the noise model
-                update!(opt, model.noise_model, noise_model_grad)
             end
             if update_col_layers_reg
                 # Update column layer regularizer's parameters
                 update!(opt, col_layer_regs, reg_grads[2])
             end
+        end
+        if update_noise_models 
+            # Update the noise model
+            update!(opt, model.noise_model, noise_model_grad)
         end
 
         ######################################
