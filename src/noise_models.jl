@@ -832,6 +832,7 @@ function ChainRulesCore.rrule(::typeof(loss), osh::OrdinalSqHingeNoise, A::Abstr
 
     loss = l_diff.*l_diff
     loss = l_diff.*l_diff .+ r_diff.*r_diff
+    loss .+= transpose(osh.weight)
 
     return 0.5.*sum(loss), ordinal_sq_hinge_pullback
 end
