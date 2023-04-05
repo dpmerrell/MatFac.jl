@@ -305,10 +305,11 @@ end
 
 function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
     #return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)
-    M, N = size(D)
-    result = similar(D, N)
-    result .= M
-    return result
+    #M, N = size(D)
+    #result = similar(D, N)
+    #result .= M
+    #return result
+    return column_nonnan(D)
 end
 
 #function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
@@ -698,11 +699,12 @@ function Base.getindex(on::OrdinalNoise, idx)
 end
 
 function link_col_sqerr(ord::OrdinalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    n_levels = length(ord.ext_thresholds) - 1
-    M, N = size(D)
-    result = similar(D, N)
-    result .= (M*n_levels*n_levels)
-    return result
+    #n_levels = length(ord.ext_thresholds) - 1
+    #M, N = size(D)
+    #result = similar(D, N)
+    #result .= (M*n_levels*n_levels)
+    #return result
+    return column_nonnan(D) .* (n_levels*n_levels)
 end
 
 
