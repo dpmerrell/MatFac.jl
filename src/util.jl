@@ -267,7 +267,7 @@ end
 
 
 function sqerr_func(model, D)
-    diff = (link(model.noise_model, D) - model())
+    diff = (link(model.noise_model, D) .- model())
     diff .*= diff
     diff[(!isfinite).(diff)] .= 0
     return diff

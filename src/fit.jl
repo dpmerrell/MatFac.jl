@@ -109,16 +109,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     row_layers = make_viewable(model.row_transform)
     col_layers = make_viewable(model.col_transform)
 
-    # Define the log-likelihood function
-    likelihood = (X,Y,
-                  r_layers,
-                  c_layers,
-                  noise, D)-> data_loss(X,Y,
-                                        r_layers,
-                                        c_layers,
-                                        noise, D; 
-                                        calibrate=calibrate_losses)
-
     # Prep the regularizers
     col_layer_regs = model.col_transform_reg
     row_layer_regs = model.row_transform_reg

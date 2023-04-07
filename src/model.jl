@@ -136,6 +136,12 @@ function data_loss(X, Y, row_trans, col_trans, noise_model, D; kwargs...)
            )
 end
 
+# Define the log-likelihood function
+likelihood(X,Y, r_layers, c_layers, noise, D) = data_loss(X,Y,
+                                                          r_layers,
+                                                          c_layers,
+                                                          noise, D; 
+                                                          calibrate=true)
 
 function data_loss(bm::MatFacModel, D; kwargs...)
     return data_loss(bm.X, bm.Y, 
