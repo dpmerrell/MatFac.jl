@@ -29,10 +29,12 @@ end
 
 
 function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix; kwargs...)
+    nanvals = (!isfinite).(D)
     diff = (Z .- D)
     diff .*= diff
     diff .*= 0.5
     diff .*= transpose(nn.weight)
+    diff[nanvals] .= 0
     return diff
 end
 
@@ -141,6 +143,8 @@ end
 
 
 function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
+
+    nanvals = (!isfinite).(D)
     Z2 = map(cross_entropy_kernel, Z, D)
 
     # The `calibrate` kwarg indicates whether to subtract
@@ -149,6 +153,7 @@ function loss(bn::BernoulliNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrat
         Z2 .-= map(cross_entropy_kernel, D, D)
     end
     Z2 .*= transpose(bn.weight)
+    Z2[nanvals] .= 0
     return Z2 
 end
 
@@ -356,12 +361,14 @@ function poisson_loss_kernel(z::T, d::Number) where T <: Number
 end
 
 function loss(pn::PoissonNoise, Z::AbstractMatrix, D::AbstractMatrix; calibrate=false)
-    
+   
+    nanvals = (!isfinite).(D) 
     pl = map(poisson_loss_kernel, Z, D) 
     if calibrate
         pl .-= map(poisson_loss_kernel, D, D)
     end
     pl .*= transpose(pn.weight)
+    pl[nanvals] .= 0
     return pl 
 
 end

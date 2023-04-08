@@ -311,7 +311,7 @@ function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
     N = size(D, 2)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    result = vec(batched_mapreduce(d->sum(sqerr_func(d), dims=1),
+    result = vec(batched_mapreduce((m,d)->sum(sqerr_func(m,d), dims=1),
                                    (st, ssq) -> st .+ ssq,
                                    model, D; start=reduce_start, capacity=capacity)
                 )
