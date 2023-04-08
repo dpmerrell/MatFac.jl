@@ -193,7 +193,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         # Iterate through the ROWS of data
         if (update_Y | update_col_layers)
             
-            Threads.@threads :static for row_batch in row_batches # enumerate(BatchIter(M, row_batch_size))
+            Threads.@threads :static for row_batch in row_batches 
                 th = Threads.threadid()
 
                 X_view = view(model.X, :, row_batch)
@@ -443,14 +443,13 @@ end
 # Means and variances of loss
 ##############################################################
 
-
 function batched_column_loss_sum(model::MatFacModel, D::AbstractMatrix; capacity=10^8, map_func=x->x)
     N = size(D,1)
     loss_start = similar(D, (1,N))
     loss_start .= 0
 
-    total_loss = batched_mapreduce((m,d) -> map_func(column_loss_sum(m,d)),
-                                   (s,L) -> s .+ sum(L, dims=1),
+    total_loss = batched_mapreduce((m,d) -> sum(map_func(column_loss_sum(m,d)), dims=1),
+                                   (s,L) -> s .+ L,
                                    model, D;
                                    start=loss_start,
                                    capacity=capacity)
@@ -493,12 +492,13 @@ function column_ssq_grads(model, D, m_row)
     return sum(grads .* grads; dims=1)
 end 
 
-function column_ssq_grads(model, D)
 
+function column_ssq_grads(model, D)
     Z = forward(model)
     grads = Zygote.gradient(A->invlinkloss(model.noise_model, A, D), Z)[1]
     return sum(grads .* grads; dims=1)
 end
+
 
 function batched_column_ssq_grads(model, col_M_estimates, D; capacity::Integer=10^8)
     N = size(D, 2)

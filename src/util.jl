@@ -144,8 +144,22 @@ end
 # "Batched" operations for large arrays
 ###################################################
 
-function batched_mapreduce(mp, red, D_list...; capacity=Int(25e6), start=0.0)
+# GPU implementations
+function batched_map_gpu(mp, D_list...; capacity=10^8)
+    M, N = size(D_list[1])
+    row_batch_size = div(capacity, N)
+    n_batches = div(M, row_batch_size)
+    result = Vector{Any}(undef, n_batches)
 
+    for (i, row_batch) in enumerate(BatchIter(M, row_batch_size))
+        result[i] = mp(map(D -> view(D, row_batch, :), D_list)...) 
+    end
+
+    return result
+end
+
+function batched_mapreduce_gpu(mp, red, D_list...; capacity=10^8, start=0.0)
+    
     M, N = size(D_list[1])
     row_batch_size = div(capacity, N)
     result = start
@@ -158,9 +172,58 @@ function batched_mapreduce(mp, red, D_list...; capacity=Int(25e6), start=0.0)
     return result
 end
 
-function batched_reduce(red, D::AbstractMatrix; kwargs...)
-    return batched_mapreduce(x -> x, red, D; kwargs...)
-end 
+
+# Multiprocess CPU implementations
+function batched_map_cpu(mp, D_list...; capacity=10^8)
+
+    M, N = size(D_list[1])
+    nthread = Threads.nthreads()
+    capacity = min(capacity, M*N)
+    row_batch_size = max(div(capacity,(N*nthread)),1)
+    row_batches = batch_iterations(M, row_batch_size)
+    n_batches = length(row_batches)
+    result = Vector{Any}(undef, n_batches)
+
+    Threads.@threads for i=1:n_batches
+        row_batch=row_batches[i]
+        result[i] = mp(map(D -> view(D, row_batch, :), D_list)...) 
+    end
+
+    return result
+end
+
+function batched_mapreduce_cpu(mp, red, D_list...; capacity=10^8, start=0.0)
+
+    # Apply the map function in a parallelized fashion
+    mapped_vals = batched_map_cpu(mp, D_list...; capacity=capacity)
+    
+    # Accumulate the reduced result
+    result = start
+    for v in mapped_vals
+        result = red(result, v)
+    end
+
+    return result
+end
+
+test_cuda(D_list...) = any(map(d->isa(d, CuArray), D_list))
+
+function batched_map(mp, D_list...; capacity=10^8)
+    if test_cuda(D_list...)
+        return batched_map_gpu(mp, D_list...; capacity=capacity)
+    else
+        return batched_map_cpu(mp, D_list...; capacity=capacity)
+    end
+end
+
+
+function batched_mapreduce(mp, red, D_list...; capacity=10^8, start=0.0)
+    if test_cuda(D_list...)
+        return batched_mapreduce_gpu(mp, red, D_list...; capacity=capacity)
+    else
+        return batched_mapreduce_cpu(mp, red, D_list...; capacity=capacity)
+    end
+end
 
 
 ###################################################
@@ -207,37 +270,6 @@ function column_nanmeans(D::AbstractMatrix)
 end
 
 
-function batched_column_meanvar(D::AbstractMatrix; capacity=Int(25e6))
-
-    M, N = size(D)
-    
-    # Replace NaNs with zeros
-    nan_idx = isnan.(D)
-    nonnan_idx = (!).(nan_idx)
-    tozero!(D, nan_idx)
-    M_vec = vec(sum(nonnan_idx, dims=1))
-
-    # Compute column means
-    sum_vec = vec(sum(D, dims=1))
-    mean_vec = sum_vec ./ M_vec
-
-    # Compute column variances via 
-    # V[x] = E[x^2] - E[x]^2
-    reduce_start = similar(D, 1, N)
-    reduce_start .= 0
-    sumsq_vec = vec(batched_reduce((v, D2) -> v .+ sum(D2.*D2; dims=1), D;
-                                 start=reduce_start, capacity=capacity)
-                   )
-    meansq_vec = sumsq_vec ./ M_vec
-    var_vec = meansq_vec .- (mean_vec.*mean_vec)
-
-    # Restore NaN values
-    tonan!(D, nan_idx)
-
-    return mean_vec, var_vec
-end
-
-
 function batched_link_mean(noise_model, D; capacity=10^8, latent_map_fn=l->l)
 
     M, N = size(D)
@@ -253,13 +285,13 @@ function batched_link_mean(noise_model, D; capacity=10^8, latent_map_fn=l->l)
     function map_func(d)
         l = latent_map_fn(link(noise_model, d))
         l[(!isfinite).(l)] .= 0
-        return l
+        return sum(l, dims=1)
     end
 
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
     mean_vec = vec(batched_mapreduce(map_func,
-                                     (s,Z) -> s .+ sum(Z, dims=1),
+                                     (s,Z) -> s .+ Z,
                                      D; start=reduce_start, capacity=capacity)
                   ) ./M_vec
     return mean_vec
@@ -279,8 +311,8 @@ function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
     N = size(D, 2)
     reduce_start = similar(D, 1, N)
     reduce_start .= 0
-    result = vec(batched_mapreduce(sqerr_func,
-                                   (st, ssq) -> st .+ sum(ssq, dims=1),
+    result = vec(batched_mapreduce(d->sum(sqerr_func(d), dims=1),
+                                   (st, ssq) -> st .+ ssq,
                                    model, D; start=reduce_start, capacity=capacity)
                 )
     return result

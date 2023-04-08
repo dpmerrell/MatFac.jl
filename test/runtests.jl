@@ -98,11 +98,11 @@ function util_tests()
         MF.tonan!(test_array, nan_idx)
 
         #########################################
-        # batched_reduce
-        s = MF.batched_reduce((s, D) -> s + sum(isnan.(D)), test_array; capacity=20)
+        # batched_mapreduce
+        s = MF.batched_mapreduce(x->x, (s, D) -> s + sum(isnan.(D)), test_array; capacity=20)
         @test s == sum(isnan.(test_array))
 
-        col_counts = MF.batched_reduce((r, D) -> r .+ sum(isnan.(D), dims=1), test_array; capacity=20)
+        col_counts = MF.batched_mapreduce(x->x, (r, D) -> r .+ sum(isnan.(D), dims=1), test_array; capacity=20)
         @test isapprox(col_counts, sum(isnan.(test_array), dims=1))
 
         ########################################## 
@@ -110,20 +110,13 @@ function util_tests()
         @test isapprox(MF.column_nonnan(test_array), vec(sum((!isnan).(test_array), dims=1)))
 
         #########################################
-        # batched_column_meanvar
-        A = randn(10,20)
-        batched_means, batched_vars = MF.batched_column_meanvar(A; capacity=20)
-        @test isapprox(batched_means, vec(mean(A; dims=1)))
-        @test isapprox(batched_vars, vec(var(A; dims=1, corrected=false)))
-
-        #########################################
         # batched_data_loss
+        A = randn(10,20)
         matfac = MF.MatFacModel(10, 20, 1, "normal")
         matfac.X .= 0
         matfac.Y .= 0
         total_loss = MF.batched_data_loss(matfac, A; capacity=20)
         @test isapprox(total_loss, 0.5*sum(A .* A), )
-
 
     end
 
