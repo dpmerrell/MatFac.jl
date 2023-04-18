@@ -356,13 +356,16 @@ function history!(hist::AbstractDict; kwargs...)
     end
 end
 
-function finalize_history!(hist::AbstractDict)
+function finalize_history!(hist::AbstractDict; kwargs...)
     for k in keys(hist)
         hist[k] = collect(hist[k])
     end
+    for (k,v) in kwargs
+        hist[string(k)] = v
+    end
 end
 
-function finalize_history!(hist::Nothing)
+function finalize_history!(hist::Nothing; kwargs...)
     return
 end
 

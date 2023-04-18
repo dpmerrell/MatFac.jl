@@ -430,8 +430,6 @@ function Base.getindex(pn::PoissonNoise, idx)
     return PoissonNoise(Base.getindex(pn.weight, idx))
 end
 
-poisson_sample(z) = rand(Poisson(z))
-
 
 function link_col_sqerr(pn::PoissonNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
     return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...)

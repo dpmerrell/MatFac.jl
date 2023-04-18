@@ -26,7 +26,8 @@ function fit!(model::MatFacModel, D::CuMatrix;
               update_Y_reg=true,
               update_row_layers_reg=true,
               update_col_layers_reg=true,
-              t_start=nothing
+              t_start=nothing,
+              epoch=1
               )
     
     #############################
@@ -120,7 +121,8 @@ function fit!(model::MatFacModel, D::CuMatrix;
         t_start = time()
     end
     tol_iters = 0
-    #vprint("Fitting model parameters...\n"; prefix=print_prefix)
+    term_code = "max_epochs"
+
     while epoch <= max_epochs
 
         if (epoch % print_iter) == 0
@@ -299,9 +301,11 @@ function fit!(model::MatFacModel, D::CuMatrix;
             best_loss = loss
             if loss_diff < abs_tol
                 tol_iters += 1
+                term_code = "abs_tol"
                 vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol=",abs_tol, "\n"; level=1)
             elseif loss_diff/abs(loss) < abs_tol
                 tol_iters += 1
+                term_code = "rel_tol"
                 vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol=",rel_tol, "\n"; level=1)
             else
                 tol_iters = 0
@@ -309,6 +313,7 @@ function fit!(model::MatFacModel, D::CuMatrix;
         else # Loss is higher than the best loss!
             if loss_diff < 0 # Loss is increase! 
                 tol_iters += 1
+                term_code = "loss_increase"
                 vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase (Loss=", loss,")\n"; level=1)
             end
         end
@@ -327,7 +332,7 @@ function fit!(model::MatFacModel, D::CuMatrix;
     #############################
     # Termination
     #############################
-    finalize_history!(hist)
+    finalize_history!(hist; term_code=term_code)
 
     return hist
 end
