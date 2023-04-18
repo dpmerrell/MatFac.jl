@@ -163,7 +163,6 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     #############################
     # Main loop 
     #############################
-    epoch = 1
     if t_start == nothing
         t_start = time()
     end
@@ -393,7 +392,7 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
     #############################
     # Termination
     #############################
-    finalize_history!(hist; term_code=term_code)
+    finalize_history!(hist; term_code=term_code, epochs=epoch)
 
     return hist
 end
