@@ -385,7 +385,8 @@ function fit!(model::MatFacModel, D::AbstractMatrix;
         end
 
     end
-    if epoch >= max_epochs 
+    if epoch >= max_epochs
+        term_code = "max_epochs" 
         vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=1)
     end
 
