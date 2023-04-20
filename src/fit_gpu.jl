@@ -290,7 +290,7 @@ function fit!(model::MatFacModel, D::CuMatrix;
 
         # Report the loss
         if (epoch % print_iter) == 0
-            vprint("Loss=",loss, " (", round(Int, elapsed), "s elapsed)\n"; prefix="")
+            vprint("Loss=",loss, "; term_iter=",tol_iters,"/",tol_max_iters," (", round(Int, elapsed), "s elapsed)\n"; prefix="")
         end
 
         # Check termination conditions
@@ -301,11 +301,9 @@ function fit!(model::MatFacModel, D::CuMatrix;
             if loss_diff < abs_tol
                 tol_iters += 1
                 term_code = "abs_tol"
-                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; abs_tol=",abs_tol, "\n"; level=1)
             elseif loss_diff/abs(loss) < abs_tol
                 tol_iters += 1
                 term_code = "rel_tol"
-                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; rel_tol=",rel_tol, "\n"; level=1)
             else
                 tol_iters = 0
             end
@@ -313,19 +311,19 @@ function fit!(model::MatFacModel, D::CuMatrix;
             if loss_diff < 0 # Loss is increase! 
                 tol_iters += 1
                 term_code = "loss_increase"
-                vprint("termination counter: ", tol_iters,"/",tol_max_iters ,"; loss increase (Loss=", loss,")\n"; level=1)
             end
         end
         prev_loss = loss
 
         if tol_iters >= tol_max_iters
-            vprint("Reached max termination counter (", tol_max_iters, "). Terminating\n"; level=1)
+            vprint("Reached max termination counter (", tol_max_iters, "). Terminating; code=`", term_code, ",`\n"; level=1)
             break
         end
 
     end
     if epoch >= max_epochs 
         vprint("Terminated: reached max_epochs=", max_epochs, "\n"; level=1)
+        term_code = "max_epochs"
     end
 
     #############################
@@ -335,3 +333,5 @@ function fit!(model::MatFacModel, D::CuMatrix;
 
     return hist
 end
+
+
