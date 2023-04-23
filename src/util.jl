@@ -158,7 +158,7 @@ function batched_map_gpu(mp, D_list...; capacity=10^8)
     return result
 end
 
-function batched_mapreduce_gpu(mp, red, D_list...; capacity=10^8, start=0.0)
+function batched_mapreduce_gpu(mp, red, D_list...; capacity=10^8, start=Float32(0.0))
     
     M, N = size(D_list[1])
     row_batch_size = div(capacity, N)
@@ -217,11 +217,11 @@ function batched_map(mp, D_list...; capacity=10^8)
 end
 
 
-function batched_mapreduce(mp, red, D_list...; capacity=10^8, start=0.0)
+function batched_mapreduce(mp, red, D_list...; capacity=10^8, start=Float32(0.0))
     if test_cuda(D_list...)
-        return batched_mapreduce_gpu(mp, red, D_list...; capacity=capacity)
+        return batched_mapreduce_gpu(mp, red, D_list...; capacity=capacity, start=start)
     else
-        return batched_mapreduce_cpu(mp, red, D_list...; capacity=capacity)
+        return batched_mapreduce_cpu(mp, red, D_list...; capacity=capacity, start=start)
     end
 end
 
@@ -310,7 +310,7 @@ function batched_link_col_sqerr(model, D::AbstractMatrix; capacity=10^8)
 
     N = size(D, 2)
     reduce_start = similar(D, 1, N)
-    reduce_start .= 0
+    reduce_start .= Float32(0)
     result = vec(batched_mapreduce((m,d)->sum(sqerr_func(m,d), dims=1),
                                    (st, ssq) -> st .+ ssq,
                                    model, D; start=reduce_start, capacity=capacity)
