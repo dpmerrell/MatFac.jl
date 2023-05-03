@@ -270,6 +270,36 @@ function column_nanmeans(D::AbstractMatrix)
 end
 
 
+function batched_column_nanvar(D; capacity=10^8)
+    M, N = size(D)
+    nonnan_idx = isfinite.(D)
+    nan_idx = (!).(nonnan_idx)
+    M_vec = vec(sum(nonnan_idx, dims=1))
+    D[nan_idx] .= 0
+
+    s = similar(D,1, N)
+    s .= 0
+    s = vec(batched_mapreduce(d->sum(d, dims=1),
+                              (s,Z) -> s .+ Z,
+                              D; start=s, capacity=capacity))
+    #s .= s ./ M_vec
+    s .= s ./ M
+
+    ssq = similar(D, 1, N)
+    ssq .= 0
+    ssq = vec(batched_mapreduce(d->sum(d.*d, dims=1),
+                                (ssq,Z) -> ssq .+ Z,
+                                D; start=ssq, capacity=capacity))
+    #ssq .= ssq ./ M_vec
+    ssq .= ssq ./ M
+
+    D[nan_idx] .= NaN
+    
+    vars = ssq .- (s.*s)
+    return vars 
+end
+
+
 function batched_link_mean(noise_model, D; capacity=10^8, latent_map_fn=l->l)
 
     M, N = size(D)
