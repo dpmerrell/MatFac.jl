@@ -32,9 +32,9 @@ function loss(nn::NormalNoise, Z::AbstractMatrix, D::AbstractMatrix; kwargs...)
     nanvals = (!isfinite).(D)
     diff = (Z .- D)
     diff .*= diff
-    diff .*= 0.5
+    diff .*= Float32(0.5)
     diff .*= transpose(nn.weight)
-    diff[nanvals] .= 0
+    diff[nanvals] .= Float32(0)
     return diff
 end
 
@@ -72,7 +72,8 @@ end
 
 
 function link_col_sqerr(nn::NormalNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return batched_link_col_sqerr(model, D; capacity=capacity, kwargs...) 
+    result = batched_link_col_sqerr(model, D; capacity=capacity, kwargs...) 
+    return result
 end
 
 
@@ -215,7 +216,8 @@ function Base.getindex(bn::BernoulliNoise, idx)
 end
 
 function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
-    return vec(batched_column_ssq_grads(model, D; capacity=capacity))
+    result = vec(batched_column_ssq_grads(model, D; capacity=capacity))
+    return result
 end
 
 #function link_col_sqerr(bn::BernoulliNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
@@ -244,7 +246,7 @@ end
 
 function link(shn::SquaredHingeNoise, D::AbstractMatrix)
     result = copy(D)
-    result[D .== 0] .= -1
+    result[D .== 0] .= Float32(-1)
 
     return result
 end
@@ -314,7 +316,8 @@ function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capaci
     #result = similar(D, N)
     #result .= M
     #return result
-    return column_nonnan(D)
+    result = column_nonnan(D)
+    return result
 end
 
 #function link_col_sqerr(shn::SquaredHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
@@ -747,8 +750,8 @@ function link(osh::OrdinalSqHingeNoise, D::AbstractMatrix)
     nan_idx = (!isfinite).(D)
 
     temp_thresh = Flux.cpu(osh.ext_thresholds)
-    min_thresh = temp_thresh[2] - 1
-    max_thresh = temp_thresh[end-1] + 1
+    min_thresh = temp_thresh[2] - Float32(1)
+    max_thresh = temp_thresh[end-1] + Float32(1)
 
     L_idx = nanround.(D)
     l_thresh = osh.ext_thresholds[L_idx]
@@ -758,9 +761,9 @@ function link(osh::OrdinalSqHingeNoise, D::AbstractMatrix)
     r_thresh = osh.ext_thresholds[R_idx]
     r_thresh = map(th -> isfinite(th) ? th : max_thresh, r_thresh) 
 
-    midpoints = 0.5.*(l_thresh .+ r_thresh)
+    midpoints = Float32(0.5).*(l_thresh .+ r_thresh)
 
-    midpoints[nan_idx] .= NaN
+    midpoints[nan_idx] .= Float32(NaN)
 
     return midpoints
 end
@@ -831,8 +834,12 @@ function ChainRulesCore.rrule(::typeof(loss), osh::OrdinalSqHingeNoise, A::Abstr
             rel_l_diff = rel_L_idx .* l_diff
 
             thresh_bar[k] = -sum(transpose(w) .* (rel_r_diff .+ rel_l_diff))
-        end 
-        thresh_bar = Flux.gpu(thresh_bar) 
+        end
+ 
+        if isa(osh.ext_thresholds, CuArray) 
+            thresh_bar = Flux.gpu(thresh_bar)
+        end
+
         return NoTangent(), Tangent{OrdinalSqHingeNoise}(ext_thresholds=thresh_bar),
                A_bar, NoTangent()
     end    
@@ -854,10 +861,12 @@ end
 function link_col_sqerr(osh::OrdinalSqHingeNoise, model, D::AbstractMatrix; capacity=10^8, kwargs...)
 
     n_thresh = length(osh.ext_thresholds) - 2
-    M, N = size(D)
-    result = similar(D, N)
+    #M, N = size(D)
+    #result = similar(D, N)
     #result .= (M*n_thresh*n_thresh)
-    result .= M
+    #result .= M
+    
+    result = column_nonnan(D).*n_thresh
     return result
 end
 
