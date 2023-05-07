@@ -282,16 +282,16 @@ function batched_column_nanvar(D; capacity=10^8)
     s = vec(batched_mapreduce(d->sum(d, dims=1),
                               (s,Z) -> s .+ Z,
                               D; start=s, capacity=capacity))
-    #s .= s ./ M_vec
-    s .= s ./ M
+    s .= s ./ M_vec
+    #s .= s ./ M
 
     ssq = similar(D, 1, N)
     ssq .= 0
     ssq = vec(batched_mapreduce(d->sum(d.*d, dims=1),
                                 (ssq,Z) -> ssq .+ Z,
                                 D; start=ssq, capacity=capacity))
-    #ssq .= ssq ./ M_vec
-    ssq .= ssq ./ M
+    ssq .= ssq ./ M_vec
+    #ssq .= ssq ./ M
 
     D[nan_idx] .= NaN
     
